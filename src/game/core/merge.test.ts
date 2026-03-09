@@ -30,6 +30,24 @@ describe("merge", () => {
     expect(score).toBe(0);
   });
 
+  it("[1,0,1] left becomes [2,0,0]", () => {
+    const { row, score } = slideRowLeft([1, 0, 1]);
+    expect(row).toEqual([2, 0, 0]);
+    expect(score).toBe(2);
+  });
+
+  it("[1,0,1] right becomes [0,0,2]", () => {
+    const { row, score } = slideRowRight([1, 0, 1]);
+    expect(row).toEqual([0, 0, 2]);
+    expect(score).toBe(2);
+  });
+
+  it("[8,0,8] left stays [8,8,0]", () => {
+    const { row, score } = slideRowLeft([8, 0, 8]);
+    expect(row).toEqual([8, 8, 0]);
+    expect(score).toBe(0);
+  });
+
   it("[1,1,1,1] in 3-length row not used; 3-length [1,1,1] already tested", () => {
     const { row } = slideRowLeft([1, 1, 1]);
     expect(row).toEqual([2, 1, 0]);

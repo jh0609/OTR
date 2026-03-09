@@ -3,10 +3,9 @@ import type { Types } from "phaser";
 import { BootScene } from "../scenes/BootScene";
 import { GameScene } from "../scenes/GameScene";
 import { UIScene } from "../scenes/UIScene";
+import { GAME_WIDTH, GAME_HEIGHT } from "./dimensions";
 
-/** Mobile portrait design size. */
-export const GAME_WIDTH = 390;
-export const GAME_HEIGHT = 844;
+export { GAME_WIDTH, GAME_HEIGHT };
 
 export function getPhaserConfig(container: HTMLElement): Types.Core.GameConfig {
   return {

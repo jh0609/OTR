@@ -36,7 +36,8 @@ export class UIScene extends Phaser.Scene {
     this.drawHero();
     this.drawOverlays();
     this.refreshFromRegistry();
-    this.events.on("stateChanged", this.refreshFromRegistry, this);
+    // Listen to global game events so GameScene can notify us.
+    this.game.events.on("stateChanged", this.refreshFromRegistry, this);
   }
 
   private drawHeader(): void {

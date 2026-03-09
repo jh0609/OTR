@@ -21,11 +21,27 @@ export type Direction = "up" | "down" | "left" | "right";
 
 export const DIRECTIONS: readonly Direction[] = ["up", "down", "left", "right"];
 
+/** Coordinate on the board. */
+export interface CellPosition {
+  readonly row: number;
+  readonly col: number;
+}
+
+/** Movement trace for a single tile during a move (before spawn). */
+export interface MoveTrace {
+  readonly from: CellPosition;
+  readonly to: CellPosition;
+  /** True if this tile was consumed into a merge at the destination. */
+  readonly mergedInto: boolean;
+}
+
 /** Result of applying a move (before spawning). */
 export interface MoveResult {
   readonly board: Board;
   readonly scoreDelta: number;
   readonly changed: boolean;
+  readonly merged: CellPosition[];
+  readonly traces: MoveTrace[];
 }
 
 /** Result of a full move step: slide + optional spawn. */
@@ -34,12 +50,8 @@ export interface StepResult {
   readonly scoreDelta: number;
   readonly changed: boolean;
   readonly spawnedAt: { row: number; col: number } | null;
-}
-
-/** Coordinate on the board. */
-export interface CellPosition {
-  readonly row: number;
-  readonly col: number;
+  readonly merged: CellPosition[];
+  readonly traces: MoveTrace[];
 }
 
 /** Spawn weight: only level 1 with 100% for now. */

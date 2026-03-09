@@ -1,4 +1,4 @@
-import { GAME_WIDTH, GAME_HEIGHT } from "./index";
+import { GAME_WIDTH, GAME_HEIGHT } from "./dimensions";
 
 export const HEADER_HEIGHT = 52;
 export const SCORE_PANEL_TOP = 64;

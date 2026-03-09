@@ -46,6 +46,41 @@ describe("move", () => {
     expect(result.changed).toBe(false);
   });
 
+  it("[1,0,1] left becomes [2,0,0]", () => {
+    const board: Board = [
+      [1, 0, 1],
+      [0, 0, 0],
+      [0, 0, 0],
+    ];
+    const result = applyMove(board, "left");
+    expect(result.changed).toBe(true);
+    expect(result.board[0]).toEqual([2, 0, 0]);
+    expect(result.scoreDelta).toBe(2);
+  });
+
+  it("[1,0,1] right becomes [0,0,2]", () => {
+    const board: Board = [
+      [1, 0, 1],
+      [0, 0, 0],
+      [0, 0, 0],
+    ];
+    const result = applyMove(board, "right");
+    expect(result.changed).toBe(true);
+    expect(result.board[0]).toEqual([0, 0, 2]);
+    expect(result.scoreDelta).toBe(2);
+  });
+
+  it("[8,0,8] left stays [8,8,0]", () => {
+    const board: Board = [
+      [8, 0, 8],
+      [0, 0, 0],
+      [0, 0, 0],
+    ];
+    const result = applyMove(board, "left");
+    expect(result.board[0]).toEqual([8, 8, 0]);
+    expect(result.scoreDelta).toBe(0);
+  });
+
   it("right: [1,1,1] becomes [0,1,2]", () => {
     const board: Board = [
       [1, 1, 1],

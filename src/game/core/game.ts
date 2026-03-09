@@ -46,6 +46,8 @@ export function step(
       scoreDelta: 0,
       changed: false,
       spawnedAt: null,
+      merged: [],
+      traces: [],
     };
   }
   const spawnResult = spawnOne(moveResult.board, randomIndex);
@@ -54,5 +56,7 @@ export function step(
     scoreDelta: moveResult.scoreDelta,
     changed: true,
     spawnedAt: spawnResult.spawnedAt,
+    merged: moveResult.merged,
+    traces: moveResult.traces,
   };
 }
