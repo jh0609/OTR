@@ -1,0 +1,54 @@
+/**
+ * Apply a direction to the full board; returns new board, score delta, and changed flag.
+ */
+
+import type { Board, Cell, Direction, MoveResult } from "./types";
+import { copyBoard, getRow, getColumn, setRow, setColumn } from "./board";
+import {
+  slideRowLeft,
+  slideRowRight,
+  slideColumnUp,
+  slideColumnDown,
+} from "./merge";
+
+export type { MoveResult };
+
+function boardEquals(a: Board, b: Board): boolean {
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      if (a[r][c] !== b[r][c]) return false;
+    }
+  }
+  return true;
+}
+
+/** Apply one move (slide + merge). Does not spawn. */
+export function applyMove(board: Board, direction: Direction): MoveResult {
+  let next: Cell[][] = copyBoard(board);
+  let totalScore = 0;
+
+  if (direction === "left" || direction === "right") {
+    const slide = direction === "left" ? slideRowLeft : slideRowRight;
+    for (let r = 0; r < 3; r++) {
+      const row = getRow(board, r);
+      const { row: newRow, score } = slide(row);
+      totalScore += score;
+      next = setRow(next as Board, r, newRow);
+    }
+  } else {
+    const slide = direction === "up" ? slideColumnUp : slideColumnDown;
+    for (let c = 0; c < 3; c++) {
+      const col = getColumn(board, c);
+      const { col: newCol, score } = slide(col);
+      totalScore += score;
+      next = setColumn(next as Board, c, newCol);
+    }
+  }
+
+  const changed = !boardEquals(board, next as Board);
+  return {
+    board: next as Board,
+    scoreDelta: totalScore,
+    changed,
+  };
+}
