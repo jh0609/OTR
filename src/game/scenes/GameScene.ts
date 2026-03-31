@@ -13,6 +13,9 @@ import {
 import { TILE_COLORS, TILE_SHADOW, TILE_SHADOW_ALPHA } from "../config/colors";
 import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON } from "../registry";
 
+// 타일이 셀의 약 70~75%를 차지하도록 약간 크게 설정.
+const TILE_SIZE_RATIO = 0.45;
+
 export class GameScene extends Phaser.Scene {
   private boardGraphics!: Phaser.GameObjects.Graphics;
   private inputLocked = false;
@@ -130,7 +133,7 @@ export class GameScene extends Phaser.Scene {
         if (level === 0) continue;
         const cx = BOARD_MARGIN + gap + c * (CELL_SIZE + gap) + CELL_SIZE / 2;
         const cy = BOARD_TOP + gap + r * (CELL_SIZE + gap) + CELL_SIZE / 2;
-        const size = CELL_SIZE * 0.4;
+        const size = CELL_SIZE * TILE_SIZE_RATIO;
         this.drawTile(g, cx, cy, size, level);
       }
     }
@@ -144,35 +147,45 @@ export class GameScene extends Phaser.Scene {
     level: number
   ): void {
     const shadowOff = 3;
-    const color = TILE_COLORS[level] ?? 0xcccccc;
+    const baseColor = TILE_COLORS[level] ?? 0xcccccc;
 
-    const drawShape = (ox: number, oy: number, col: number, alpha: number) => {
+    // 레인보우 타일은 전용 렌더링으로 처리.
+    if (level === 8) {
+      this.drawRainbowTile(g, cx, cy, size, shadowOff);
+      return;
+    }
+
+    const shapeLevel = level;
+
+    const drawShapeAtSize = (ox: number, oy: number, s: number, col: number, alpha: number) => {
       g.fillStyle(col, alpha);
       const x = cx + ox;
       const y = cy + oy;
 
-      switch (level) {
+      switch (shapeLevel) {
         case 1:
-          g.fillCircle(x, y, size);
+          g.fillCircle(x, y, s);
           break;
         case 2: {
-          const h = size * 1.2;
+          // 단순하지만 덜 뾰족한 이등변 삼각형
+          const h = s * 0.9;
+          const halfBase = s * 0.9;
           g.fillTriangle(
-            x, y - h,
-            x - size, y + h * 0.6,
-            x + size, y + h * 0.6
+            x,            y - h,          // top
+            x + halfBase, y + h * 0.75,   // bottom-right
+            x - halfBase, y + h * 0.75    // bottom-left
           );
           break;
         }
         case 3:
-          g.fillRoundedRect(x - size, y - size, size * 2, size * 2, 4);
+          g.fillRoundedRect(x - s, y - s, s * 2, s * 2, 6);
           break;
         case 4: {
           const pts: Phaser.Geom.Point[] = [];
           for (let i = 0; i < 6; i++) {
             const a = (i / 6) * Math.PI * 2 - Math.PI / 6;
-            const px = x + Math.cos(a) * size;
-            const py = y + Math.sin(a) * size;
+            const px = x + Math.cos(a) * s;
+            const py = y + Math.sin(a) * s;
             pts.push(new Phaser.Geom.Point(px, py));
           }
           g.fillPoints(pts, true);
@@ -182,16 +195,18 @@ export class GameScene extends Phaser.Scene {
           const pts: Phaser.Geom.Point[] = [];
           for (let i = 0; i < 8; i++) {
             const a = (i / 8) * Math.PI * 2 - Math.PI / 8;
-            const px = x + Math.cos(a) * size;
-            const py = y + Math.sin(a) * size;
+            const px = x + Math.cos(a) * s;
+            const py = y + Math.sin(a) * s;
             pts.push(new Phaser.Geom.Point(px, py));
           }
           g.fillPoints(pts, true);
+          const rCorner = s * 0.2;
+          pts.forEach((p) => g.fillCircle(p.x, p.y, rCorner));
           break;
         }
         case 6: {
-          const outer = size;
-          const inner = size * 0.45;
+          const outer = s;
+          const inner = s * 0.6; // 덜 뾰족한 별
           const pts: Phaser.Geom.Point[] = [];
           for (let i = 0; i < 10; i++) {
             const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
@@ -201,11 +216,14 @@ export class GameScene extends Phaser.Scene {
             pts.push(new Phaser.Geom.Point(px, py));
           }
           g.fillPoints(pts, true);
+          const rCorner = s * 0.18;
+          // 바깥 꼭짓점에만 부드러운 라운딩
+          pts.filter((_, i) => i % 2 === 0).forEach((p) => g.fillCircle(p.x, p.y, rCorner));
           break;
         }
         case 7: {
-          const outer = size;
-          const inner = size * 0.55;
+          const outer = s;
+          const inner = s * 0.75; // 더 부드러운 꽃/별 느낌
           const pts: Phaser.Geom.Point[] = [];
           for (let i = 0; i < 16; i++) {
             const a = (i / 16) * Math.PI * 2 - Math.PI / 16;
@@ -215,25 +233,81 @@ export class GameScene extends Phaser.Scene {
             pts.push(new Phaser.Geom.Point(px, py));
           }
           g.fillPoints(pts, true);
+          const rCorner = s * 0.18;
+          pts.filter((_, i) => i % 2 === 0).forEach((p) => g.fillCircle(p.x, p.y, rCorner));
           break;
         }
-        case 8: {
-          g.fillStyle(0xe8a0a0, alpha);
-          g.fillRoundedRect(x - size, y - size, size * 2, size * 2, size * 0.4);
-          g.fillStyle(0xf0e890, alpha * 0.9);
-          g.fillRoundedRect(x - size * 0.7, y - size * 0.7, size * 1.4, size * 1.4, size * 0.3);
-          g.fillStyle(0x90d8d8, alpha * 0.8);
-          g.fillRoundedRect(x - size * 0.4, y - size * 0.4, size * 0.8, size * 0.8, size * 0.2);
-          return;
-        }
         default:
-          g.fillCircle(x, y, size * 0.5);
+          g.fillCircle(x, y, s * 0.5);
       }
     };
 
-    drawShape(shadowOff, shadowOff, TILE_SHADOW, TILE_SHADOW_ALPHA);
-    drawShape(0, 0, color, 1);
+    // 1) 부드러운 드롭 섀도우
+    drawShapeAtSize(shadowOff, shadowOff, size, TILE_SHADOW, TILE_SHADOW_ALPHA);
+    // 2) 본체
+    drawShapeAtSize(0, 0, size, baseColor, 1);
+    // 3) 은은한 외곽선(밝은 링)
+    drawShapeAtSize(0, 0, size * 1.04, 0xffffff, 0.22);
   }
+
+  private drawRainbowTile(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    size: number,
+    shadowOff: number
+  ): void {
+    const baseRadius = size * 0.55;
+    const width = size * 2;
+    const height = size * 2;
+    const left = cx - size;
+    const top = cy - size;
+
+    // 1) 부드러운 드롭 섀도우
+    g.fillStyle(TILE_SHADOW, TILE_SHADOW_ALPHA);
+    g.fillRoundedRect(left + shadowOff, top + shadowOff, width, height, baseRadius);
+
+    // 2) 베이스 바탕 (밝은 톤)
+    g.fillStyle(0xffffff, 1);
+    g.fillRoundedRect(left, top, width, height, baseRadius);
+
+    // 3) 레인보우 수평 밴드
+    const bandColors = [
+      0xf36c6c, // red
+      0xf5a742, // orange
+      0xf7d64a, // yellow
+      0x64c878, // green
+      0x5a8cf0, // blue
+      0x4655b8, // indigo
+      0xca78f5, // violet
+    ];
+    const innerPaddingX = size * 0.18;
+    const innerPaddingY = size * 0.18;
+    const innerLeft = left + innerPaddingX;
+    const innerTop = top + innerPaddingY;
+    const innerWidth = width - innerPaddingX * 2;
+    const innerHeight = height - innerPaddingY * 2;
+    const bandHeight = innerHeight / bandColors.length;
+
+    bandColors.forEach((col, index) => {
+      const y = innerTop + bandHeight * index;
+      const isFirst = index === 0;
+      const isLast = index === bandColors.length - 1;
+      const radius = isFirst || isLast ? baseRadius * 0.5 : 0;
+      g.fillStyle(col, 1);
+      if (radius > 0) {
+        g.fillRoundedRect(innerLeft, y, innerWidth, bandHeight + 0.5, radius);
+      } else {
+        g.fillRect(innerLeft, y, innerWidth, bandHeight + 0.5);
+      }
+    });
+
+    // 4) 은은한 외곽선
+    g.lineStyle(2, 0xffffff, 0.6);
+    g.strokeRoundedRect(left, top, width, height, baseRadius);
+  }
+
+  // drawRoundedPolygon 헬퍼는 현재 사용하지 않으므로 제거했습니다.
 
   private playTileAnimations(
     previousBoard: Board,
@@ -269,13 +343,24 @@ export class GameScene extends Phaser.Scene {
         return;
       }
 
-       // 이동 애니메이션이 끝난 시점에 실제 보드를 최종 상태로 다시 그림.
-       this.renderBoard(nextBoard);
+      // 이동 애니메이션 직후에는, 스폰 칸만 비운 보드를 그려서
+      // 작은 점에서 커지는 효과가 더 잘 보이도록 한다.
+      let baseBoard: Board = nextBoard;
+      if (spawnedAt) {
+        const { row, col } = spawnedAt;
+        const temp: number[][] = nextBoard.map((r) => [...r]);
+        temp[row][col] = 0;
+        baseBoard = temp as unknown as Board;
+      }
+      this.renderBoard(baseBoard);
 
       let finished = 0;
       const onDone = () => {
         finished += 1;
         if (finished >= finishTargets) {
+          // 머지/스폰 애니메이션이 모두 끝난 뒤 최종 보드를 한 번 더 그려서
+          // 스폰 칸까지 포함된 실제 상태를 확정한다.
+          this.renderBoard(nextBoard);
           tweens.forEach((t) => t.remove());
           this.inputLocked = false;
         }
@@ -304,13 +389,14 @@ export class GameScene extends Phaser.Scene {
         const { row, col } = spawnedAt;
         const level = nextBoard[row][col];
         const container = makeContainerWithLevel(row, col, level, 11);
-        container.setScale(0.3);
+        // 좀 더 작은 크기에서 부드럽게 커지도록 조정
+        container.setScale(0.2);
         container.setAlpha(0);
         const tween = this.tweens.add({
           targets: container,
           scale: 1,
           alpha: 1,
-          duration: 140,
+          duration: 190,
           ease: "Sine.easeOut",
           onComplete: () => {
             container.destroy();
