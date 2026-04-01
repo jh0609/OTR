@@ -127,68 +127,126 @@ export class UIScene extends Phaser.Scene {
   }
 
   private drawOverlays(): void {
-    const cardW = GAME_WIDTH - 48;
-    const cardH = 160;
-    const cardX = 24;
+    const cardW = GAME_WIDTH - 44;
+    const cardX = 22;
+    const cardH = 228;
     const cardY = (GAME_HEIGHT - cardH) / 2;
-    const overlayBtnH = 44;
+
+    const drawButton = (
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      label: string,
+      isPrimary: boolean
+    ): Phaser.GameObjects.Container => {
+      const g = this.add.graphics();
+      const radius = 12;
+      if (isPrimary) {
+        g.fillStyle(0x000000, 0.16);
+        g.fillRoundedRect(x, y + 3, width, height, radius);
+        g.fillStyle(0xff6f61, 1);
+        g.fillRoundedRect(x, y, width, height, radius);
+      } else {
+        g.fillStyle(0x000000, 0.08);
+        g.fillRoundedRect(x, y + 2, width, height, radius);
+        g.fillStyle(0xffffff, 0.95);
+        g.fillRoundedRect(x, y, width, height, radius);
+        g.lineStyle(2, 0xe5e7eb, 1);
+        g.strokeRoundedRect(x + 1, y + 1, width - 2, height - 2, radius - 1);
+      }
+      const txt = this.add.text(x + width / 2, y + height / 2, label, {
+        fontSize: "16px",
+        color: isPrimary ? "#ffffff" : "#374151",
+        fontStyle: "700",
+      }).setOrigin(0.5);
+      return this.add.container(0, 0, [g, txt]);
+    };
+
+    const drawOverlayCard = (accentColor: number): Phaser.GameObjects.Graphics => {
+      const g = this.add.graphics();
+      g.fillStyle(0x000000, 0.2);
+      g.fillRoundedRect(cardX, cardY + 6, cardW, cardH, 20);
+      g.fillStyle(0xffffff, 1);
+      g.fillRoundedRect(cardX, cardY, cardW, cardH, 20);
+      g.lineStyle(2, 0xe5e7eb, 1);
+      g.strokeRoundedRect(cardX + 1, cardY + 1, cardW - 2, cardH - 2, 19);
+      g.fillStyle(accentColor, 0.95);
+      g.fillRoundedRect(cardX + 18, cardY + 18, cardW - 36, 34, 10);
+      return g;
+    };
 
     const makeGameOverOverlay = () => {
       const bg = this.add.graphics();
-      bg.fillStyle(0x000000, 0.5);
+      bg.fillStyle(0x0b1020, 0.58);
       bg.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
-      const card = this.add.graphics();
-      card.fillStyle(parseInt(COLORS.overlayCard.slice(1), 16), 1);
-      card.fillRoundedRect(cardX, cardY, cardW, cardH, 16);
-      const titleText = this.add.text(GAME_WIDTH / 2, cardY + 44, "No more moves", {
+
+      const card = drawOverlayCard(0xf97316);
+      const ribbon = this.add.text(GAME_WIDTH / 2, cardY + 35, "●", {
         fontSize: "18px",
-        color: COLORS.overlayText,
+        color: "#ffffff",
+        fontStyle: "700",
       }).setOrigin(0.5);
-      const btnY = cardY + 79 + overlayBtnH / 2;
-      const restartBtn = this.add.text(GAME_WIDTH / 2, btnY, "Play again", {
-        fontSize: "16px",
-        color: COLORS.buttonText,
-      }).setOrigin(0.5).setPadding(24, 14).setInteractive({ useHandCursor: true });
-      const btnBg = this.add.graphics();
-      btnBg.fillStyle(parseInt(COLORS.buttonBg.slice(1), 16), 1);
-      btnBg.fillRoundedRect(cardX + cardW / 2 - 60, cardY + 79, 120, overlayBtnH, 12);
+      const title = this.add.text(GAME_WIDTH / 2, cardY + 90, "!", {
+        fontSize: "56px",
+        color: "#1f2937",
+        fontStyle: "700",
+      }).setOrigin(0.5);
+      const subtitle = this.add.text(GAME_WIDTH / 2, cardY + 132, " ", {
+        fontSize: "1px",
+        color: "#6b7280",
+      }).setOrigin(0.5);
+
+      const restartBtn = drawButton(cardX + 34, cardY + cardH - 62, cardW - 68, 46, "↻", true);
+      restartBtn.setInteractive(
+        new Phaser.Geom.Rectangle(cardX + 34, cardY + cardH - 62, cardW - 68, 46),
+        Phaser.Geom.Rectangle.Contains
+      );
       restartBtn.on("pointerdown", () => this.scene.start(SCENE_KEYS.BOOT));
-      return this.add.container(0, 0, [bg, card, titleText, btnBg, restartBtn]);
+
+      return this.add.container(0, 0, [bg, card, ribbon, title, subtitle, restartBtn]);
     };
 
-    const winCardH = cardH + 28;
-    const winCardY = (GAME_HEIGHT - winCardH) / 2;
     const makeWinOverlay = () => {
       const bg = this.add.graphics();
-      bg.fillStyle(0x000000, 0.5);
+      bg.fillStyle(0x0b1020, 0.52);
       bg.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
-      const card = this.add.graphics();
-      card.fillStyle(parseInt(COLORS.overlayCard.slice(1), 16), 1);
-      card.fillRoundedRect(cardX, winCardY, cardW, winCardH, 16);
-      const titleText = this.add.text(GAME_WIDTH / 2, winCardY + 40, "You reached\nthe rainbow!", {
+
+      const card = drawOverlayCard(0x22c55e);
+      const ribbon = this.add.text(GAME_WIDTH / 2, cardY + 35, "●", {
         fontSize: "18px",
-        color: COLORS.overlayText,
-        align: "center",
+        color: "#ffffff",
+        fontStyle: "700",
       }).setOrigin(0.5);
-      const winBtnY = winCardY + 114;
-      const continueBtn = this.add.text(GAME_WIDTH / 2 - 55, winBtnY, "Continue", {
-        fontSize: "15px",
-        color: COLORS.buttonText,
-      }).setOrigin(0.5).setPadding(16, 12).setInteractive({ useHandCursor: true });
-      const restartBtn = this.add.text(GAME_WIDTH / 2 + 55, winBtnY, "Play again", {
-        fontSize: "15px",
-        color: COLORS.buttonText,
-      }).setOrigin(0.5).setPadding(16, 12).setInteractive({ useHandCursor: true });
-      const g = this.add.graphics();
-      g.fillStyle(parseInt(COLORS.buttonBg.slice(1), 16), 1);
-      g.fillRoundedRect(cardX + 24, winCardY + 92, 100, overlayBtnH, 10);
-      g.fillRoundedRect(cardX + cardW - 124, winCardY + 92, 100, overlayBtnH, 10);
+      const title = this.add.text(GAME_WIDTH / 2, cardY + 90, "★", {
+        fontSize: "52px",
+        color: "#1f2937",
+        fontStyle: "700",
+      }).setOrigin(0.5);
+      const subtitle = this.add.text(GAME_WIDTH / 2, cardY + 132, " ", {
+        fontSize: "1px",
+        color: "#6b7280",
+      }).setOrigin(0.5);
+
+      const continueBtn = drawButton(cardX + 18, cardY + cardH - 62, 154, 46, "▶", false);
+      const restartBtn = drawButton(cardX + cardW - 172, cardY + cardH - 62, 154, 46, "↻", true);
+
+      continueBtn.setInteractive(
+        new Phaser.Geom.Rectangle(cardX + 18, cardY + cardH - 62, 154, 46),
+        Phaser.Geom.Rectangle.Contains
+      );
+      restartBtn.setInteractive(
+        new Phaser.Geom.Rectangle(cardX + cardW - 172, cardY + cardH - 62, 154, 46),
+        Phaser.Geom.Rectangle.Contains
+      );
+
       continueBtn.on("pointerdown", () => {
         this.registry.set(REG_WIN_DISMISSED, true);
         this.winOverlay.setVisible(false);
       });
       restartBtn.on("pointerdown", () => this.scene.start(SCENE_KEYS.BOOT));
-      return this.add.container(0, 0, [bg, card, titleText, g, continueBtn, restartBtn]);
+
+      return this.add.container(0, 0, [bg, card, ribbon, title, subtitle, continueBtn, restartBtn]);
     };
 
     this.winOverlay = makeWinOverlay();

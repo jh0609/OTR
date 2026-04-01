@@ -25,28 +25,12 @@ type Lv1ShaderPreset = {
   strength: number;
 };
 
-const LV1_SHADER_PRESETS: Record<"soft" | "balanced" | "strong", Lv1ShaderPreset> = {
-  soft: {
-    baseRed: [0.89, 0.24, 0.24],
-    alphaMin: 0.03,
-    alphaMax: 0.34,
-    darkLumThreshold: 0.32,
-    strength: 0.38,
-  },
-  balanced: {
-    baseRed: [0.89, 0.24, 0.24],
-    alphaMin: 0.03,
-    alphaMax: 0.38,
-    darkLumThreshold: 0.34,
-    strength: 0.55,
-  },
-  strong: {
-    baseRed: [0.89, 0.24, 0.24],
-    alphaMin: 0.02,
-    alphaMax: 0.44,
-    darkLumThreshold: 0.38,
-    strength: 0.72,
-  },
+const LV1_SHADER_PRESET: Lv1ShaderPreset = {
+  baseRed: [0.89, 0.24, 0.24],
+  alphaMin: 0.03,
+  alphaMax: 0.38,
+  darkLumThreshold: 0.34,
+  strength: 0.55,
 };
 
 export class GameScene extends Phaser.Scene {
@@ -54,7 +38,6 @@ export class GameScene extends Phaser.Scene {
   private staticTiles: Phaser.GameObjects.Image[] = [];
   private inputLocked = false;
   private lv1PipelineReady = false;
-  private lv1ShaderPresetKey: keyof typeof LV1_SHADER_PRESETS = "balanced";
 
   constructor() {
     super({ key: SCENE_KEYS.GAME });
@@ -82,14 +65,6 @@ export class GameScene extends Phaser.Scene {
           this.tryMove(dir);
         });
       });
-    }
-    const qualityKeys = this.input.keyboard?.addKeys("ONE,TWO,THREE") as
-      | { ONE: Phaser.Input.Keyboard.Key; TWO: Phaser.Input.Keyboard.Key; THREE: Phaser.Input.Keyboard.Key }
-      | undefined;
-    if (qualityKeys) {
-      qualityKeys.ONE.on("down", () => this.setLv1ShaderPreset("soft"));
-      qualityKeys.TWO.on("down", () => this.setLv1ShaderPreset("balanced"));
-      qualityKeys.THREE.on("down", () => this.setLv1ShaderPreset("strong"));
     }
 
     const swipeThreshold = 40;
@@ -225,7 +200,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private applyLv1ShaderUniforms(image: Phaser.GameObjects.Image): void {
-    const preset = LV1_SHADER_PRESETS[this.lv1ShaderPresetKey];
+    const preset = LV1_SHADER_PRESET;
     const pipeline = image.pipeline as unknown as {
       set3f?: (name: string, x: number, y: number, z: number) => void;
       set2f?: (name: string, x: number, y: number) => void;
@@ -263,11 +238,6 @@ export class GameScene extends Phaser.Scene {
     } else if (pipeline.setFloat2) {
       pipeline.setFloat2("uTexelSize", tx, ty);
     }
-  }
-
-  private setLv1ShaderPreset(presetKey: keyof typeof LV1_SHADER_PRESETS): void {
-    this.lv1ShaderPresetKey = presetKey;
-    this.refreshBoard();
   }
 
   private playTileAnimations(
