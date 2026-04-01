@@ -13,7 +13,6 @@ import {
 import {
   REG_SCORE,
   REG_BEST,
-  REG_BOARD,
   REG_GAMEOVER,
   REG_HASWON,
   REG_WIN_DISMISSED,
@@ -25,7 +24,6 @@ export class UIScene extends Phaser.Scene {
   private scoreText!: Phaser.GameObjects.Text;
   private bestText!: Phaser.GameObjects.Text;
   private hintText!: Phaser.GameObjects.Text;
-  private progressText!: Phaser.GameObjects.Text;
   private winOverlay!: Phaser.GameObjects.Container;
   private gameOverOverlay!: Phaser.GameObjects.Container;
 
@@ -50,15 +48,21 @@ export class UIScene extends Phaser.Scene {
 
     const title = this.add.text(20, HEADER_HEIGHT / 2, GAME_TITLE, {
       fontSize: "18px",
-      color: COLORS.headerText,
-    }).setOrigin(0, 0.5);
+      color: "#0f172a",
+      fontStyle: "700",
+      stroke: "#ffffff",
+      strokeThickness: 2,
+    }).setOrigin(0, 0.5).setShadow(0, 1, "#ffffff", 1, false, true);
 
     const closeX = GAME_WIDTH - 16;
     const closeBtn = this.add.text(closeX, HEADER_HEIGHT / 2, "Home", {
       fontSize: "14px",
-      color: COLORS.headerText,
+      color: "#111827",
+      fontStyle: "700",
       backgroundColor: "#f2f4f7",
-    }).setOrigin(1, 0.5).setPadding(10, 6).setInteractive(
+      stroke: "#ffffff",
+      strokeThickness: 1,
+    }).setOrigin(1, 0.5).setPadding(10, 6).setShadow(0, 1, "#ffffff", 0.8, false, true).setInteractive(
       { useHandCursor: true, hitArea: new Phaser.Geom.Rectangle(-CLOSE_BTN_SIZE / 2, -CLOSE_BTN_SIZE / 2, CLOSE_BTN_SIZE, CLOSE_BTN_SIZE), hitAreaCallback: Phaser.Geom.Rectangle.Contains }
     );
     closeBtn.on("pointerdown", () => {
@@ -77,19 +81,27 @@ export class UIScene extends Phaser.Scene {
 
     this.scoreText = this.add.text(GAME_WIDTH / 2, SCORE_PANEL_TOP + 33, "0", {
       fontSize: "40px",
-      color: COLORS.scoreText,
+      color: "#0f172a",
       fontStyle: "700",
-    }).setOrigin(0.5);
+      stroke: "#ffffff",
+      strokeThickness: 3,
+    }).setOrigin(0.5).setShadow(0, 2, "#ffffff", 1, false, true);
 
     this.bestText = this.add.text(GAME_WIDTH / 2, SCORE_PANEL_TOP + 67, "Best: 0", {
-      fontSize: "14px",
-      color: COLORS.bestText,
-    }).setOrigin(0.5);
+      fontSize: "15px",
+      color: "#1f2937",
+      fontStyle: "700",
+      stroke: "#ffffff",
+      strokeThickness: 2,
+    }).setOrigin(0.5).setShadow(0, 1, "#ffffff", 0.8, false, true);
 
     this.hintText = this.add.text(GAME_WIDTH / 2, SCORE_PANEL_TOP + SCORE_PANEL_HEIGHT + 14, "Swipe to move", {
-      fontSize: "14px",
-      color: "#667085",
-    }).setOrigin(0.5);
+      fontSize: "15px",
+      color: "#374151",
+      fontStyle: "700",
+      stroke: "#ffffff",
+      strokeThickness: 2,
+    }).setOrigin(0.5).setShadow(0, 1, "#ffffff", 0.8, false, true);
   }
 
   private drawHero(): void {
@@ -120,10 +132,6 @@ export class UIScene extends Phaser.Scene {
     g.fillEllipse(325, cloudY + 5, 38, 20);
     g.fillEllipse(315, cloudY + 12, 40, 18);
 
-    this.progressText = this.add.text(GAME_WIDTH / 2, HERO_TOP + HERO_HEIGHT - 14, "Rainbow progress: 1/8", {
-      fontSize: "12px",
-      color: "#4b5563",
-    }).setOrigin(0.5);
   }
 
   private drawOverlays(): void {
@@ -156,10 +164,12 @@ export class UIScene extends Phaser.Scene {
         g.strokeRoundedRect(x + 1, y + 1, width - 2, height - 2, radius - 1);
       }
       const txt = this.add.text(x + width / 2, y + height / 2, label, {
-        fontSize: "16px",
+        fontSize: "20px",
         color: isPrimary ? "#ffffff" : "#374151",
         fontStyle: "700",
-      }).setOrigin(0.5);
+        stroke: isPrimary ? "#7f1d1d" : "#ffffff",
+        strokeThickness: 2,
+      }).setOrigin(0.5).setShadow(0, 1, isPrimary ? "#7f1d1d" : "#ffffff", 0.8, false, true);
       return this.add.container(0, 0, [g, txt]);
     };
 
@@ -182,16 +192,13 @@ export class UIScene extends Phaser.Scene {
       bg.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
       const card = drawOverlayCard(0xf97316);
-      const ribbon = this.add.text(GAME_WIDTH / 2, cardY + 35, "●", {
-        fontSize: "18px",
-        color: "#ffffff",
+      const title = this.add.text(GAME_WIDTH / 2, cardY + 92, "GAME OVER", {
+        fontSize: "34px",
+        color: "#111827",
         fontStyle: "700",
-      }).setOrigin(0.5);
-      const title = this.add.text(GAME_WIDTH / 2, cardY + 90, "!", {
-        fontSize: "56px",
-        color: "#1f2937",
-        fontStyle: "700",
-      }).setOrigin(0.5);
+        stroke: "#ffffff",
+        strokeThickness: 3,
+      }).setOrigin(0.5).setShadow(0, 2, "#ffffff", 1, false, true);
       const subtitle = this.add.text(GAME_WIDTH / 2, cardY + 132, " ", {
         fontSize: "1px",
         color: "#6b7280",
@@ -204,7 +211,7 @@ export class UIScene extends Phaser.Scene {
       );
       restartBtn.on("pointerdown", () => this.scene.start(SCENE_KEYS.BOOT));
 
-      return this.add.container(0, 0, [bg, card, ribbon, title, subtitle, restartBtn]);
+      return this.add.container(0, 0, [bg, card, title, subtitle, restartBtn]);
     };
 
     const makeWinOverlay = () => {
@@ -213,16 +220,13 @@ export class UIScene extends Phaser.Scene {
       bg.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
       const card = drawOverlayCard(0x22c55e);
-      const ribbon = this.add.text(GAME_WIDTH / 2, cardY + 35, "●", {
-        fontSize: "18px",
-        color: "#ffffff",
+      const title = this.add.text(GAME_WIDTH / 2, cardY + 92, "VICTORY", {
+        fontSize: "36px",
+        color: "#111827",
         fontStyle: "700",
-      }).setOrigin(0.5);
-      const title = this.add.text(GAME_WIDTH / 2, cardY + 90, "★", {
-        fontSize: "52px",
-        color: "#1f2937",
-        fontStyle: "700",
-      }).setOrigin(0.5);
+        stroke: "#ffffff",
+        strokeThickness: 3,
+      }).setOrigin(0.5).setShadow(0, 2, "#ffffff", 1, false, true);
       const subtitle = this.add.text(GAME_WIDTH / 2, cardY + 132, " ", {
         fontSize: "1px",
         color: "#6b7280",
@@ -246,7 +250,7 @@ export class UIScene extends Phaser.Scene {
       });
       restartBtn.on("pointerdown", () => this.scene.start(SCENE_KEYS.BOOT));
 
-      return this.add.container(0, 0, [bg, card, ribbon, title, subtitle, continueBtn, restartBtn]);
+      return this.add.container(0, 0, [bg, card, title, subtitle, continueBtn, restartBtn]);
     };
 
     this.winOverlay = makeWinOverlay();
@@ -258,14 +262,11 @@ export class UIScene extends Phaser.Scene {
   private refreshFromRegistry(): void {
     const score = this.registry.get(REG_SCORE) as number;
     const best = this.registry.get(REG_BEST) as number;
-    const board = this.registry.get(REG_BOARD) as number[][] | undefined;
     const gameOver = this.registry.get(REG_GAMEOVER) as boolean;
     const hasWon = this.registry.get(REG_HASWON) as boolean;
 
     this.scoreText.setText(String(score));
     this.bestText.setText("Best: " + best);
-    const maxLevel = board ? Math.max(...board.flat()) : 1;
-    if (this.progressText) this.progressText.setText("Rainbow progress: " + maxLevel + "/8");
     if (this.hintText) this.hintText.setVisible(score === 0);
 
     const winDismissed = this.registry.get(REG_WIN_DISMISSED) as boolean;
