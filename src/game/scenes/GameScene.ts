@@ -26,6 +26,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    if (this.game.renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
+      // Apply stronger edge anti-aliasing at output stage (keeps source textures unchanged).
+      this.cameras.main.setPostPipeline("FXAA");
+    }
     this.boardGraphics = this.add.graphics();
     this.refreshBoard();
     this.setupInput();
