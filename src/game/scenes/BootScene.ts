@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { SCENE_KEYS } from "../constants";
 import { initGame } from "../core";
 import { getBestScore } from "../storage";
+import { TILE_TEXTURE_SOURCES } from "../assets";
 import {
   REG_BOARD,
   REG_SCORE,
@@ -16,7 +17,11 @@ export class BootScene extends Phaser.Scene {
     super({ key: SCENE_KEYS.BOOT });
   }
 
-  preload(): void {}
+  preload(): void {
+    TILE_TEXTURE_SOURCES.forEach(({ key, path }) => {
+      this.load.image(key, path);
+    });
+  }
 
   create(): void {
     const i1 = Math.floor(Math.random() * 9);
