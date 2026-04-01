@@ -17,7 +17,7 @@ export function getPhaserConfig(container: HTMLElement): Types.Core.GameConfig {
     render: {
       antialias: true,
       antialiasGL: true,
-      roundPixels: true,
+      roundPixels: false,
     },
     scale: {
       mode: Phaser.Scale.FIT,
