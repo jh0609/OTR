@@ -13,7 +13,7 @@ export function getPhaserConfig(container: HTMLElement): Types.Core.GameConfig {
       ? window.devicePixelRatio
       : 1;
   // HiDPI supersampling: improve sprite edge quality while capping GPU cost.
-  const renderResolution = Math.min(Math.max(dpr, 1), 3);
+  const renderResolution = Math.min(Math.max(dpr, 1), 2);
 
   const config = {
     type: Phaser.AUTO,
