@@ -14,7 +14,7 @@ import {
 import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON } from "../registry";
 
 // 타일이 셀의 약 70~75%를 차지하도록 약간 크게 설정.
-const TILE_SIZE_RATIO = 0.45;
+const TILE_SIZE_RATIO = 0.51;
 
 export class GameScene extends Phaser.Scene {
   private boardGraphics!: Phaser.GameObjects.Graphics;

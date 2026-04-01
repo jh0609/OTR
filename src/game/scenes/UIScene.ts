@@ -13,6 +13,7 @@ import {
 import {
   REG_SCORE,
   REG_BEST,
+  REG_BOARD,
   REG_GAMEOVER,
   REG_HASWON,
   REG_WIN_DISMISSED,
@@ -23,6 +24,8 @@ const CLOSE_BTN_SIZE = 44;
 export class UIScene extends Phaser.Scene {
   private scoreText!: Phaser.GameObjects.Text;
   private bestText!: Phaser.GameObjects.Text;
+  private hintText!: Phaser.GameObjects.Text;
+  private progressText!: Phaser.GameObjects.Text;
   private winOverlay!: Phaser.GameObjects.Container;
   private gameOverOverlay!: Phaser.GameObjects.Container;
 
@@ -50,15 +53,16 @@ export class UIScene extends Phaser.Scene {
       color: COLORS.headerText,
     }).setOrigin(0, 0.5);
 
-    const closeX = GAME_WIDTH - (CLOSE_BTN_SIZE / 2) - 8;
-    const closeBtn = this.add.text(closeX, HEADER_HEIGHT / 2, "X", {
-      fontSize: "22px",
+    const closeX = GAME_WIDTH - 16;
+    const closeBtn = this.add.text(closeX, HEADER_HEIGHT / 2, "Home", {
+      fontSize: "14px",
       color: COLORS.headerText,
-    }).setOrigin(0.5).setInteractive(
+      backgroundColor: "#f2f4f7",
+    }).setOrigin(1, 0.5).setPadding(10, 6).setInteractive(
       { useHandCursor: true, hitArea: new Phaser.Geom.Rectangle(-CLOSE_BTN_SIZE / 2, -CLOSE_BTN_SIZE / 2, CLOSE_BTN_SIZE, CLOSE_BTN_SIZE), hitAreaCallback: Phaser.Geom.Rectangle.Contains }
     );
     closeBtn.on("pointerdown", () => {
-      if (typeof window !== "undefined" && window.close) window.close();
+      this.scene.start(SCENE_KEYS.BOOT);
     });
   }
 
@@ -71,14 +75,20 @@ export class UIScene extends Phaser.Scene {
     g.fillStyle(parseInt(COLORS.scorePanelBg.slice(1), 16), 1);
     g.fillRoundedRect(panelX, SCORE_PANEL_TOP, panelWidth, SCORE_PANEL_HEIGHT, 16);
 
-    this.scoreText = this.add.text(GAME_WIDTH / 2, SCORE_PANEL_TOP + 28, "0", {
-      fontSize: "28px",
+    this.scoreText = this.add.text(GAME_WIDTH / 2, SCORE_PANEL_TOP + 33, "0", {
+      fontSize: "40px",
       color: COLORS.scoreText,
+      fontStyle: "700",
     }).setOrigin(0.5);
 
-    this.bestText = this.add.text(GAME_WIDTH / 2, SCORE_PANEL_TOP + 52, "Best: 0", {
-      fontSize: "16px",
+    this.bestText = this.add.text(GAME_WIDTH / 2, SCORE_PANEL_TOP + 67, "Best: 0", {
+      fontSize: "14px",
       color: COLORS.bestText,
+    }).setOrigin(0.5);
+
+    this.hintText = this.add.text(GAME_WIDTH / 2, SCORE_PANEL_TOP + SCORE_PANEL_HEIGHT + 14, "Swipe to move", {
+      fontSize: "14px",
+      color: "#667085",
     }).setOrigin(0.5);
   }
 
@@ -94,7 +104,7 @@ export class UIScene extends Phaser.Scene {
     const arcY = cy + 15;
     for (let i = 0; i < 5; i++) {
       const colors = [0xe8a0a0, 0xe8c090, 0xf0e890, 0xa8d8a0, 0x90d8d8];
-      g.lineStyle(14, colors[i], 0.85);
+      g.lineStyle(10, colors[i], 0.5);
       g.beginPath();
       g.arc(GAME_WIDTH / 2, arcY, arcRadius - i * 12, Phaser.Math.DegToRad(200), Phaser.Math.DegToRad(340), false);
       g.strokePath();
@@ -109,6 +119,11 @@ export class UIScene extends Phaser.Scene {
     g.fillEllipse(300, cloudY + 10, 45, 24);
     g.fillEllipse(325, cloudY + 5, 38, 20);
     g.fillEllipse(315, cloudY + 12, 40, 18);
+
+    this.progressText = this.add.text(GAME_WIDTH / 2, HERO_TOP + HERO_HEIGHT - 14, "Rainbow progress: 1/8", {
+      fontSize: "12px",
+      color: "#4b5563",
+    }).setOrigin(0.5);
   }
 
   private drawOverlays(): void {
@@ -185,11 +200,15 @@ export class UIScene extends Phaser.Scene {
   private refreshFromRegistry(): void {
     const score = this.registry.get(REG_SCORE) as number;
     const best = this.registry.get(REG_BEST) as number;
+    const board = this.registry.get(REG_BOARD) as number[][] | undefined;
     const gameOver = this.registry.get(REG_GAMEOVER) as boolean;
     const hasWon = this.registry.get(REG_HASWON) as boolean;
 
     this.scoreText.setText(String(score));
     this.bestText.setText("Best: " + best);
+    const maxLevel = board ? Math.max(...board.flat()) : 1;
+    if (this.progressText) this.progressText.setText("Rainbow progress: " + maxLevel + "/8");
+    if (this.hintText) this.hintText.setVisible(score === 0);
 
     const winDismissed = this.registry.get(REG_WIN_DISMISSED) as boolean;
     this.winOverlay.setVisible(hasWon && !gameOver && !winDismissed);

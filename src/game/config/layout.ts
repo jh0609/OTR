@@ -2,9 +2,9 @@ import { GAME_WIDTH, GAME_HEIGHT } from "./dimensions";
 
 export const HEADER_HEIGHT = 52;
 export const SCORE_PANEL_TOP = 64;
-export const SCORE_PANEL_HEIGHT = 72;
+export const SCORE_PANEL_HEIGHT = 86;
 export const HERO_TOP = 148;
-export const HERO_HEIGHT = 100;
+export const HERO_HEIGHT = 84;
 export const BOARD_TOP = 268;
 export const BOARD_MARGIN = 24;
 export const BOARD_CELL_GAP = 8;
@@ -19,8 +19,8 @@ export const COLORS = {
   scorePanelBg: "#ffffff",
   scorePanelShadow: "rgba(0,0,0,0.08)",
   scoreText: "#2d2d2d",
-  bestText: "#666666",
-  cellBg: "#e8dcc8",
+  bestText: "#7a7a7a",
+  cellBg: "#ddceb8",
   cellShadow: "rgba(0,0,0,0.06)",
   overlayBg: "rgba(0,0,0,0.5)",
   overlayCard: "#ffffff",
