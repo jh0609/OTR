@@ -5,6 +5,7 @@
 const KEY = "otr-best-score";
 const ANIM_SPEED_KEY = "otr-anim-speed-percent";
 const TEXT_SIZE_OFFSET_KEY = "otr-text-size-offset";
+const TEXT_BASE_SIZE_KEY = "otr-text-base-size";
 
 export function getBestScore(): number {
   if (typeof window === "undefined" || !window.localStorage) return 0;
@@ -32,16 +33,20 @@ export function setAnimationSpeedPercent(percent: number): void {
   window.localStorage.setItem(ANIM_SPEED_KEY, String(clamped));
 }
 
-export function getTextSizeOffset(): number {
-  if (typeof window === "undefined" || !window.localStorage) return 0;
-  const raw = window.localStorage.getItem(TEXT_SIZE_OFFSET_KEY);
+export function getTextBaseSize(): number {
+  if (typeof window === "undefined" || !window.localStorage) return 15;
+  const raw = window.localStorage.getItem(TEXT_BASE_SIZE_KEY);
   const n = parseInt(raw ?? "", 10);
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(-100, Math.min(200, n));
+  if (Number.isFinite(n)) return Math.max(1, Math.min(200, n));
+  // Backward-compatibility: migrate old offset value (default base 15).
+  const legacyRaw = window.localStorage.getItem(TEXT_SIZE_OFFSET_KEY);
+  const legacy = parseInt(legacyRaw ?? "", 10);
+  if (Number.isFinite(legacy)) return Math.max(1, Math.min(200, 15 + legacy));
+  return 15;
 }
 
-export function setTextSizeOffset(offset: number): void {
+export function setTextBaseSize(size: number): void {
   if (typeof window === "undefined" || !window.localStorage) return;
-  const clamped = Math.max(-100, Math.min(200, Math.round(offset)));
-  window.localStorage.setItem(TEXT_SIZE_OFFSET_KEY, String(clamped));
+  const clamped = Math.max(1, Math.min(200, Math.round(size)));
+  window.localStorage.setItem(TEXT_BASE_SIZE_KEY, String(clamped));
 }

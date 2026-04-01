@@ -17,10 +17,10 @@ import {
   REG_HASWON,
   REG_WIN_DISMISSED,
   REG_ANIM_SPEED_PERCENT,
-  REG_TEXT_SIZE_OFFSET,
+  REG_TEXT_BASE_SIZE,
   REG_UI_MODAL_OPEN,
 } from "../registry";
-import { setAnimationSpeedPercent, setTextSizeOffset } from "../storage";
+import { setAnimationSpeedPercent, setTextBaseSize } from "../storage";
 
 const CLOSE_BTN_SIZE = 44;
 
@@ -39,7 +39,8 @@ export class UIScene extends Phaser.Scene {
   private animSliderW = 0;
   private animSliderH = 0;
   private textSizeOffsetValueText!: Phaser.GameObjects.Text;
-  private textSizeOffset = 0;
+  private textBaseSize = 15;
+  private static readonly DEFAULT_TEXT_BASE_SIZE = 15;
 
   constructor() {
     super({ key: SCENE_KEYS.UI });
@@ -71,7 +72,7 @@ export class UIScene extends Phaser.Scene {
     }).setOrigin(0, 0.5).setShadow(0, 1, "#ffffff", 1, false, true);
 
     const closeX = GAME_WIDTH - 16;
-    const optionBtn = this.add.text(closeX - 72, HEADER_HEIGHT / 2, "Speed", {
+    const optionBtn = this.add.text(closeX - 72, HEADER_HEIGHT / 2, "Option", {
       fontSize: "13px",
       color: "#111827",
       fontStyle: "700",
@@ -316,9 +317,13 @@ export class UIScene extends Phaser.Scene {
       Phaser.Geom.Rectangle.Contains
     );
     bg.on("pointerdown", () => {
+      // Block click-through. Close via explicit close button.
+    });
+
+    const closeOptions = (): void => {
       this.registry.set(REG_UI_MODAL_OPEN, false);
       this.optionsOverlay.setVisible(false);
-    });
+    };
 
     const card = this.add.graphics();
     card.fillStyle(0xffffff, 1);
@@ -331,6 +336,15 @@ export class UIScene extends Phaser.Scene {
       color: "#111827",
       fontStyle: "700",
     }).setOrigin(0.5);
+    const closeBtn = this.add.text(cardX + cardW - 18, cardY + 18, "X", {
+      fontSize: "16px",
+      color: "#475467",
+      fontStyle: "700",
+      backgroundColor: "#f8fafc",
+      stroke: "#e5e7eb",
+      strokeThickness: 1,
+    }).setOrigin(0.5).setPadding(9, 4).setShadow(0, 1, "#ffffff", 0.6, false, true).setInteractive({ useHandCursor: true });
+    closeBtn.on("pointerdown", closeOptions);
 
     this.animSpeedValueText = this.add.text(GAME_WIDTH / 2, cardY + 76, "100%", {
       fontSize: "28px",
@@ -377,7 +391,7 @@ export class UIScene extends Phaser.Scene {
       backgroundColor: "#eef2ff",
     }).setOrigin(0.5).setPadding(14, 2).setInteractive({ useHandCursor: true });
 
-    this.textSizeOffsetValueText = this.add.text(cardX + cardW - 72, cardY + 176, "0", {
+    this.textSizeOffsetValueText = this.add.text(cardX + cardW - 72, cardY + 176, "0px", {
       fontSize: "20px",
       color: "#111827",
       fontStyle: "700",
@@ -401,6 +415,10 @@ export class UIScene extends Phaser.Scene {
     sliderHit.on("pointerdown", (p: Phaser.Input.Pointer) => {
       setFromPosition(p.x);
     });
+    sliderHit.on("pointermove", (p: Phaser.Input.Pointer) => {
+      if (!p.isDown) return;
+      setFromPosition(p.x);
+    });
 
     this.animSliderKnob.setInteractive({ useHandCursor: true, draggable: true });
     this.input.setDraggable(this.animSliderKnob);
@@ -408,8 +426,8 @@ export class UIScene extends Phaser.Scene {
       setFromPosition(p.x);
     });
 
-    textMinusBtn.on("pointerdown", () => this.setTextSizeOffsetStep(this.textSizeOffset - 1));
-    textPlusBtn.on("pointerdown", () => this.setTextSizeOffsetStep(this.textSizeOffset + 1));
+    textMinusBtn.on("pointerdown", () => this.setTextBaseSizeStep(this.textBaseSize - 1));
+    textPlusBtn.on("pointerdown", () => this.setTextBaseSizeStep(this.textBaseSize + 1));
 
     const speedRaw = this.registry.get(REG_ANIM_SPEED_PERCENT);
     const speed = typeof speedRaw === "number" ? speedRaw : 100;
@@ -419,6 +437,7 @@ export class UIScene extends Phaser.Scene {
       bg,
       card,
       title,
+      closeBtn,
       this.animSpeedValueText,
       sliderTrackBg,
       this.animSliderFill,
@@ -458,38 +477,27 @@ export class UIScene extends Phaser.Scene {
       const base = Number.isFinite(px) ? px : 14;
       obj.setData("baseFontSize", base);
     });
-    const raw = this.registry.get(REG_TEXT_SIZE_OFFSET);
-    const offset = typeof raw === "number" ? raw : 0;
-    this.setTextSizeOffsetStep(offset, false);
+    const raw = this.registry.get(REG_TEXT_BASE_SIZE);
+    const size = typeof raw === "number" ? raw : UIScene.DEFAULT_TEXT_BASE_SIZE;
+    this.setTextBaseSizeStep(size, false);
   }
 
-  private getMinBaseFontSize(): number {
-    let minBase = Number.POSITIVE_INFINITY;
-    this.children.list.forEach((obj) => {
-      if (!(obj instanceof Phaser.GameObjects.Text)) return;
-      const base = Number(obj.getData("baseFontSize"));
-      if (Number.isFinite(base)) minBase = Math.min(minBase, base);
-    });
-    return Number.isFinite(minBase) ? minBase : 1;
-  }
-
-  private setTextSizeOffsetStep(next: number, persist = true): void {
-    const minBase = this.getMinBaseFontSize();
-    const minOffset = 1 - minBase; // ensure font size never goes below 1
-    const clamped = Math.max(minOffset, Math.min(200, Math.round(next)));
-    this.textSizeOffset = clamped;
-    this.registry.set(REG_TEXT_SIZE_OFFSET, clamped);
+  private setTextBaseSizeStep(next: number, persist = true): void {
+    const clamped = Math.max(1, Math.min(200, Math.round(next)));
+    this.textBaseSize = clamped;
+    this.registry.set(REG_TEXT_BASE_SIZE, clamped);
     if (persist) {
-      setTextSizeOffset(clamped);
+      setTextBaseSize(clamped);
     }
+    const ratio = clamped / UIScene.DEFAULT_TEXT_BASE_SIZE;
     if (this.textSizeOffsetValueText) {
-      this.textSizeOffsetValueText.setText(String(clamped));
+      this.textSizeOffsetValueText.setText(`${clamped}px`);
     }
     this.children.list.forEach((obj) => {
       if (!(obj instanceof Phaser.GameObjects.Text)) return;
       const base = Number(obj.getData("baseFontSize"));
       if (!Number.isFinite(base)) return;
-      obj.setFontSize(`${Math.max(1, base + clamped)}px`);
+      obj.setFontSize(`${Math.max(1, Math.round(base * ratio))}px`);
     });
   }
 
@@ -515,7 +523,7 @@ export class UIScene extends Phaser.Scene {
       );
     }
     if (this.textSizeOffsetValueText) {
-      this.textSizeOffsetValueText.setText(String(this.textSizeOffset));
+      this.textSizeOffsetValueText.setText(`${this.textBaseSize}px`);
     }
 
     const winDismissed = this.registry.get(REG_WIN_DISMISSED) as boolean;
