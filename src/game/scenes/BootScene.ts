@@ -24,6 +24,11 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Keep smooth filtering for downscaled tile sprites.
+    TILE_TEXTURE_SOURCES.forEach(({ key }) => {
+      this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    });
+
     const i1 = Math.floor(Math.random() * 9);
     let i2 = Math.floor(Math.random() * 8);
     const board = initGame(i1, i2);

@@ -14,6 +14,11 @@ export function getPhaserConfig(container: HTMLElement): Types.Core.GameConfig {
     height: GAME_HEIGHT,
     parent: container,
     backgroundColor: "#e8f4f8",
+    render: {
+      antialias: true,
+      antialiasGL: true,
+      roundPixels: true,
+    },
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,

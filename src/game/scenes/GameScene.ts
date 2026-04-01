@@ -150,8 +150,8 @@ export class GameScene extends Phaser.Scene {
     depth: number
   ): Phaser.GameObjects.Image {
     const key = TILE_TEXTURE_BY_LEVEL[level];
-    const image = this.add.image(cx, cy, key);
-    const display = CELL_SIZE * TILE_SIZE_RATIO * 2;
+    const image = this.add.image(Math.round(cx), Math.round(cy), key);
+    const display = Math.round(CELL_SIZE * TILE_SIZE_RATIO * 2);
     image.setDisplaySize(display, display);
     image.setDepth(depth);
     return image;
