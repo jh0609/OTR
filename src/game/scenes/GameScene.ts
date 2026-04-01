@@ -228,8 +228,10 @@ export class GameScene extends Phaser.Scene {
     const preset = LV1_SHADER_PRESETS[this.lv1ShaderPresetKey];
     const pipeline = image.pipeline as unknown as {
       set3f?: (name: string, x: number, y: number, z: number) => void;
+      set2f?: (name: string, x: number, y: number) => void;
       set1f?: (name: string, value: number) => void;
       setFloat3?: (name: string, x: number, y: number, z: number) => void;
+      setFloat2?: (name: string, x: number, y: number) => void;
       setFloat1?: (name: string, value: number) => void;
     };
 
@@ -251,6 +253,16 @@ export class GameScene extends Phaser.Scene {
     setScalar("uAlphaMax", preset.alphaMax);
     setScalar("uDarkLumThreshold", preset.darkLumThreshold);
     setScalar("uStrength", preset.strength);
+
+    const texW = image.texture.source[0]?.width ?? 1024;
+    const texH = image.texture.source[0]?.height ?? 1024;
+    const tx = 1 / Math.max(1, texW);
+    const ty = 1 / Math.max(1, texH);
+    if (pipeline.set2f) {
+      pipeline.set2f("uTexelSize", tx, ty);
+    } else if (pipeline.setFloat2) {
+      pipeline.setFloat2("uTexelSize", tx, ty);
+    }
   }
 
   private setLv1ShaderPreset(presetKey: keyof typeof LV1_SHADER_PRESETS): void {
