@@ -38,6 +38,7 @@ export class GameScene extends Phaser.Scene {
   private staticTiles: Phaser.GameObjects.Image[] = [];
   private inputLocked = false;
   private lv1PipelineReady = false;
+  private bufferedDirection: "up" | "down" | "left" | "right" | null = null;
 
   constructor() {
     super({ key: SCENE_KEYS.GAME });
@@ -61,8 +62,7 @@ export class GameScene extends Phaser.Scene {
     if (keys) {
       ([[keys.UP, "up"], [keys.DOWN, "down"], [keys.LEFT, "left"], [keys.RIGHT, "right"]] as const).forEach(([key, dir]) => {
         key.on("down", () => {
-          if (this.inputLocked) return;
-          this.tryMove(dir);
+          this.enqueueMove(dir);
         });
       });
     }
@@ -75,17 +75,34 @@ export class GameScene extends Phaser.Scene {
       startY = p.y;
     });
     this.input.on("pointerup", (p: Phaser.Input.Pointer) => {
-      if (this.inputLocked) return;
       const dx = p.x - startX;
       const dy = p.y - startY;
       const adx = Math.abs(dx);
       const ady = Math.abs(dy);
       if (adx > ady && adx >= swipeThreshold) {
-        this.tryMove(dx > 0 ? "right" : "left");
+        this.enqueueMove(dx > 0 ? "right" : "left");
       } else if (ady >= swipeThreshold) {
-        this.tryMove(dy > 0 ? "down" : "up");
+        this.enqueueMove(dy > 0 ? "down" : "up");
       }
     });
+  }
+
+  private enqueueMove(direction: "up" | "down" | "left" | "right"): void {
+    if (this.inputLocked) {
+      // Keep one latest buffered intent while animations are running.
+      this.bufferedDirection = direction;
+      return;
+    }
+    this.tryMove(direction);
+  }
+
+  private releaseInputLock(): void {
+    this.inputLocked = false;
+    const next = this.bufferedDirection;
+    this.bufferedDirection = null;
+    if (next) {
+      this.tryMove(next);
+    }
   }
 
   private tryMove(direction: "up" | "down" | "left" | "right"): void {
@@ -100,7 +117,7 @@ export class GameScene extends Phaser.Scene {
       emptyCount > 0 ? Math.floor(Math.random() * emptyCount) : 0;
     const result = coreStep(board, direction, randomIndex);
     if (!result.changed) {
-      this.inputLocked = false;
+      this.releaseInputLock();
       return;
     }
 
@@ -268,7 +285,7 @@ export class GameScene extends Phaser.Scene {
       const tweens: Phaser.Tweens.Tween[] = [];
       const finishTargets = merged.length + (spawnedAt ? 1 : 0);
       if (finishTargets === 0) {
-        this.inputLocked = false;
+        this.releaseInputLock();
         return;
       }
 
@@ -291,7 +308,7 @@ export class GameScene extends Phaser.Scene {
           // 스폰 칸까지 포함된 실제 상태를 확정한다.
           this.renderBoard(nextBoard);
           tweens.forEach((t) => t.remove());
-          this.inputLocked = false;
+          this.releaseInputLock();
         }
       };
 
