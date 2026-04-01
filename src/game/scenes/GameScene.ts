@@ -74,11 +74,15 @@ export class GameScene extends Phaser.Scene {
     const swipeThreshold = 40;
     let startX = 0;
     let startY = 0;
+    let hasSwipeStart = false;
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       startX = p.x;
       startY = p.y;
+      hasSwipeStart = true;
     });
     this.input.on("pointerup", (p: Phaser.Input.Pointer) => {
+      if (!hasSwipeStart) return;
+      hasSwipeStart = false;
       const dx = p.x - startX;
       const dy = p.y - startY;
       const adx = Math.abs(dx);
@@ -88,6 +92,9 @@ export class GameScene extends Phaser.Scene {
       } else if (ady >= swipeThreshold) {
         this.enqueueMove(dy > 0 ? "down" : "up");
       }
+    });
+    this.input.on("gameout", () => {
+      hasSwipeStart = false;
     });
   }
 

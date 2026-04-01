@@ -6,6 +6,7 @@ const KEY = "otr-best-score";
 const ANIM_SPEED_KEY = "otr-anim-speed-percent";
 const TEXT_SIZE_OFFSET_KEY = "otr-text-size-offset";
 const TEXT_BASE_SIZE_KEY = "otr-text-base-size";
+const QUICK_RESET_KEY = "otr-quick-reset-enabled";
 
 export function getBestScore(): number {
   if (typeof window === "undefined" || !window.localStorage) return 0;
@@ -49,4 +50,14 @@ export function setTextBaseSize(size: number): void {
   if (typeof window === "undefined" || !window.localStorage) return;
   const clamped = Math.max(1, Math.min(200, Math.round(size)));
   window.localStorage.setItem(TEXT_BASE_SIZE_KEY, String(clamped));
+}
+
+export function getQuickResetEnabled(): boolean {
+  if (typeof window === "undefined" || !window.localStorage) return false;
+  return window.localStorage.getItem(QUICK_RESET_KEY) === "1";
+}
+
+export function setQuickResetEnabled(enabled: boolean): void {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  window.localStorage.setItem(QUICK_RESET_KEY, enabled ? "1" : "0");
 }
