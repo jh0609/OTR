@@ -4,6 +4,7 @@ import { SCENE_KEYS } from "../constants";
 import { step as coreStep, isGameOver, hasWon, getEmptyCount } from "../core";
 import { setBestScore } from "../storage";
 import { TILE_TEXTURE_BY_LEVEL } from "../assets";
+import { Lv1FringeFixPipeline } from "../pipelines/Lv1FringeFixPipeline";
 import {
   BOARD_MARGIN,
   BOARD_TOP,
@@ -16,16 +17,51 @@ import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON } from "../reg
 // 타일이 셀의 약 70~75%를 차지하도록 약간 크게 설정.
 const TILE_SIZE_RATIO = 0.51;
 
+type Lv1ShaderPreset = {
+  baseRed: [number, number, number];
+  alphaMin: number;
+  alphaMax: number;
+  darkLumThreshold: number;
+  strength: number;
+};
+
+const LV1_SHADER_PRESETS: Record<"soft" | "balanced" | "strong", Lv1ShaderPreset> = {
+  soft: {
+    baseRed: [0.89, 0.24, 0.24],
+    alphaMin: 0.03,
+    alphaMax: 0.34,
+    darkLumThreshold: 0.32,
+    strength: 0.38,
+  },
+  balanced: {
+    baseRed: [0.89, 0.24, 0.24],
+    alphaMin: 0.03,
+    alphaMax: 0.38,
+    darkLumThreshold: 0.34,
+    strength: 0.55,
+  },
+  strong: {
+    baseRed: [0.89, 0.24, 0.24],
+    alphaMin: 0.02,
+    alphaMax: 0.44,
+    darkLumThreshold: 0.38,
+    strength: 0.72,
+  },
+};
+
 export class GameScene extends Phaser.Scene {
   private boardGraphics!: Phaser.GameObjects.Graphics;
   private staticTiles: Phaser.GameObjects.Image[] = [];
   private inputLocked = false;
+  private lv1PipelineReady = false;
+  private lv1ShaderPresetKey: keyof typeof LV1_SHADER_PRESETS = "balanced";
 
   constructor() {
     super({ key: SCENE_KEYS.GAME });
   }
 
   create(): void {
+    this.ensureLv1Pipeline();
     if (this.game.renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
       // Apply stronger edge anti-aliasing at output stage (keeps source textures unchanged).
       this.cameras.main.setPostPipeline("FXAA");
@@ -46,6 +82,14 @@ export class GameScene extends Phaser.Scene {
           this.tryMove(dir);
         });
       });
+    }
+    const qualityKeys = this.input.keyboard?.addKeys("ONE,TWO,THREE") as
+      | { ONE: Phaser.Input.Keyboard.Key; TWO: Phaser.Input.Keyboard.Key; THREE: Phaser.Input.Keyboard.Key }
+      | undefined;
+    if (qualityKeys) {
+      qualityKeys.ONE.on("down", () => this.setLv1ShaderPreset("soft"));
+      qualityKeys.TWO.on("down", () => this.setLv1ShaderPreset("balanced"));
+      qualityKeys.THREE.on("down", () => this.setLv1ShaderPreset("strong"));
     }
 
     const swipeThreshold = 40;
@@ -161,8 +205,41 @@ export class GameScene extends Phaser.Scene {
       Math.round(CELL_SIZE * TILE_SIZE_RATIO * 2 * levelScale)
     );
     image.setDisplaySize(display, display);
+    if (level === 1 && this.lv1PipelineReady) {
+      image.setPipeline(Lv1FringeFixPipeline.KEY);
+      this.applyLv1ShaderUniforms(image);
+    }
     image.setDepth(depth);
     return image;
+  }
+
+  private ensureLv1Pipeline(): void {
+    const renderer = this.game.renderer;
+    if (!(renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer)) return;
+    if (renderer.pipelines.has(Lv1FringeFixPipeline.KEY)) {
+      this.lv1PipelineReady = true;
+      return;
+    }
+    renderer.pipelines.add(Lv1FringeFixPipeline.KEY, new Lv1FringeFixPipeline(this.game));
+    this.lv1PipelineReady = true;
+  }
+
+  private applyLv1ShaderUniforms(image: Phaser.GameObjects.Image): void {
+    const preset = LV1_SHADER_PRESETS[this.lv1ShaderPresetKey];
+    const pipeline = image.pipeline as unknown as {
+      setFloat3: (name: string, x: number, y: number, z: number) => void;
+      setFloat1: (name: string, value: number) => void;
+    };
+    pipeline.setFloat3("uBaseRed", preset.baseRed[0], preset.baseRed[1], preset.baseRed[2]);
+    pipeline.setFloat1("uAlphaMin", preset.alphaMin);
+    pipeline.setFloat1("uAlphaMax", preset.alphaMax);
+    pipeline.setFloat1("uDarkLumThreshold", preset.darkLumThreshold);
+    pipeline.setFloat1("uStrength", preset.strength);
+  }
+
+  private setLv1ShaderPreset(presetKey: keyof typeof LV1_SHADER_PRESETS): void {
+    this.lv1ShaderPresetKey = presetKey;
+    this.refreshBoard();
   }
 
   private playTileAnimations(
