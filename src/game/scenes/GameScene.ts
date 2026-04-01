@@ -12,7 +12,7 @@ import {
   CELL_SIZE,
   COLORS,
 } from "../config/layout";
-import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON } from "../registry";
+import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON, REG_WIN_DISMISSED, REG_ANIM_SPEED_PERCENT, REG_UI_MODAL_OPEN } from "../registry";
 
 // 타일이 셀의 약 70~75%를 차지하도록 약간 크게 설정.
 const TILE_SIZE_RATIO = 0.51;
@@ -46,6 +46,10 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.ensureLv1Pipeline();
+    this.game.events.on("clearBufferedInput", this.clearBufferedInput, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.game.events.off("clearBufferedInput", this.clearBufferedInput, this);
+    });
     if (this.game.renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
       // Apply stronger edge anti-aliasing at output stage (keeps source textures unchanged).
       this.cameras.main.setPostPipeline("FXAA");
@@ -88,6 +92,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private enqueueMove(direction: "up" | "down" | "left" | "right"): void {
+    const modalOpen = this.registry.get(REG_UI_MODAL_OPEN) as boolean;
+    if (modalOpen) {
+      this.bufferedDirection = null;
+      return;
+    }
     if (this.inputLocked) {
       // Keep one latest buffered intent while animations are running.
       this.bufferedDirection = direction;
@@ -105,9 +114,24 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private clearBufferedInput(): void {
+    this.bufferedDirection = null;
+  }
+
+  private getAnimationMultiplier(): number {
+    const percentRaw = this.registry.get(REG_ANIM_SPEED_PERCENT);
+    const percent = typeof percentRaw === "number" ? percentRaw : 100;
+    return Math.max(0, Math.min(2, percent / 100));
+  }
+
   private tryMove(direction: "up" | "down" | "left" | "right"): void {
     const gameOver = this.registry.get(REG_GAMEOVER) as boolean;
     if (gameOver) return;
+    const modalOpen = this.registry.get(REG_UI_MODAL_OPEN) as boolean;
+    if (modalOpen) return;
+    const hasWonNow = this.registry.get(REG_HASWON) as boolean;
+    const winDismissed = this.registry.get(REG_WIN_DISMISSED) as boolean;
+    if (hasWonNow && !winDismissed) return;
 
     const board = this.registry.get(REG_BOARD) as Board;
     this.inputLocked = true;
@@ -265,7 +289,10 @@ export class GameScene extends Phaser.Scene {
     spawnedAt: { row: number; col: number } | null
   ): void {
     const gap = BOARD_CELL_GAP;
-    const moveDuration = 140;
+    const animMultiplier = this.getAnimationMultiplier();
+    const moveDuration = Math.round(140 * animMultiplier);
+    const mergeDuration = Math.round(90 * animMultiplier);
+    const spawnDuration = Math.round(190 * animMultiplier);
 
     const makeContainerWithLevel = (
       row: number,
@@ -320,7 +347,7 @@ export class GameScene extends Phaser.Scene {
           targets: container,
           scale: { from: 1, to: 1.18 },
           yoyo: true,
-          duration: 90,
+          duration: mergeDuration,
           ease: "Sine.easeOut",
           onComplete: () => {
             container.destroy();
@@ -342,7 +369,7 @@ export class GameScene extends Phaser.Scene {
           targets: container,
           scale: 1,
           alpha: 1,
-          duration: 190,
+          duration: spawnDuration,
           ease: "Sine.easeOut",
           onComplete: () => {
             container.destroy();

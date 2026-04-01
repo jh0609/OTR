@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { SCENE_KEYS } from "../constants";
 import { initGame } from "../core";
-import { getBestScore } from "../storage";
+import { getBestScore, getAnimationSpeedPercent, getTextSizeOffset } from "../storage";
 import { TILE_TEXTURE_SOURCES } from "../assets";
 import {
   REG_BOARD,
@@ -10,6 +10,9 @@ import {
   REG_GAMEOVER,
   REG_HASWON,
   REG_WIN_DISMISSED,
+  REG_ANIM_SPEED_PERCENT,
+  REG_TEXT_SIZE_OFFSET,
+  REG_UI_MODAL_OPEN,
 } from "../registry";
 
 export class BootScene extends Phaser.Scene {
@@ -39,6 +42,9 @@ export class BootScene extends Phaser.Scene {
     this.registry.set(REG_GAMEOVER, false);
     this.registry.set(REG_HASWON, false);
     this.registry.set(REG_WIN_DISMISSED, false);
+    this.registry.set(REG_ANIM_SPEED_PERCENT, getAnimationSpeedPercent());
+    this.registry.set(REG_TEXT_SIZE_OFFSET, getTextSizeOffset());
+    this.registry.set(REG_UI_MODAL_OPEN, false);
 
     this.scene.start(SCENE_KEYS.GAME);
     this.scene.launch(SCENE_KEYS.UI);

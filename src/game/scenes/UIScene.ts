@@ -16,7 +16,11 @@ import {
   REG_GAMEOVER,
   REG_HASWON,
   REG_WIN_DISMISSED,
+  REG_ANIM_SPEED_PERCENT,
+  REG_TEXT_SIZE_OFFSET,
+  REG_UI_MODAL_OPEN,
 } from "../registry";
+import { setAnimationSpeedPercent, setTextSizeOffset } from "../storage";
 
 const CLOSE_BTN_SIZE = 44;
 
@@ -26,6 +30,16 @@ export class UIScene extends Phaser.Scene {
   private hintText!: Phaser.GameObjects.Text;
   private winOverlay!: Phaser.GameObjects.Container;
   private gameOverOverlay!: Phaser.GameObjects.Container;
+  private optionsOverlay!: Phaser.GameObjects.Container;
+  private animSpeedValueText!: Phaser.GameObjects.Text;
+  private animSliderFill!: Phaser.GameObjects.Graphics;
+  private animSliderKnob!: Phaser.GameObjects.Arc;
+  private animSliderX = 0;
+  private animSliderY = 0;
+  private animSliderW = 0;
+  private animSliderH = 0;
+  private textSizeOffsetValueText!: Phaser.GameObjects.Text;
+  private textSizeOffset = 0;
 
   constructor() {
     super({ key: SCENE_KEYS.UI });
@@ -36,6 +50,8 @@ export class UIScene extends Phaser.Scene {
     this.drawScorePanel();
     this.drawHero();
     this.drawOverlays();
+    this.drawOptionsOverlay();
+    this.initTextResizeState();
     this.refreshFromRegistry();
     // Listen to global game events so GameScene can notify us.
     this.game.events.on("stateChanged", this.refreshFromRegistry, this);
@@ -55,6 +71,22 @@ export class UIScene extends Phaser.Scene {
     }).setOrigin(0, 0.5).setShadow(0, 1, "#ffffff", 1, false, true);
 
     const closeX = GAME_WIDTH - 16;
+    const optionBtn = this.add.text(closeX - 72, HEADER_HEIGHT / 2, "Speed", {
+      fontSize: "13px",
+      color: "#111827",
+      fontStyle: "700",
+      backgroundColor: "#f2f4f7",
+      stroke: "#ffffff",
+      strokeThickness: 1,
+    }).setOrigin(1, 0.5).setPadding(10, 6).setShadow(0, 1, "#ffffff", 0.8, false, true).setInteractive(
+      { useHandCursor: true }
+    );
+    optionBtn.on("pointerdown", () => {
+      this.registry.set(REG_UI_MODAL_OPEN, true);
+      this.game.events.emit("clearBufferedInput");
+      this.optionsOverlay.setVisible(true);
+    });
+
     const closeBtn = this.add.text(closeX, HEADER_HEIGHT / 2, "Home", {
       fontSize: "14px",
       color: "#111827",
@@ -190,6 +222,11 @@ export class UIScene extends Phaser.Scene {
       const bg = this.add.graphics();
       bg.fillStyle(0x0b1020, 0.58);
       bg.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+      bg.setInteractive(
+        new Phaser.Geom.Rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT),
+        Phaser.Geom.Rectangle.Contains
+      );
+      bg.on("pointerdown", () => {});
 
       const card = drawOverlayCard(0xf97316);
       const title = this.add.text(GAME_WIDTH / 2, cardY + 92, "GAME OVER", {
@@ -218,6 +255,11 @@ export class UIScene extends Phaser.Scene {
       const bg = this.add.graphics();
       bg.fillStyle(0x0b1020, 0.52);
       bg.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+      bg.setInteractive(
+        new Phaser.Geom.Rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT),
+        Phaser.Geom.Rectangle.Contains
+      );
+      bg.on("pointerdown", () => {});
 
       const card = drawOverlayCard(0x22c55e);
       const title = this.add.text(GAME_WIDTH / 2, cardY + 92, "VICTORY", {
@@ -245,6 +287,7 @@ export class UIScene extends Phaser.Scene {
       );
 
       continueBtn.on("pointerdown", () => {
+        this.game.events.emit("clearBufferedInput");
         this.registry.set(REG_WIN_DISMISSED, true);
         this.winOverlay.setVisible(false);
       });
@@ -259,6 +302,197 @@ export class UIScene extends Phaser.Scene {
     this.gameOverOverlay.setVisible(false);
   }
 
+  private drawOptionsOverlay(): void {
+    const cardW = GAME_WIDTH - 72;
+    const cardH = 236;
+    const cardX = (GAME_WIDTH - cardW) / 2;
+    const cardY = (GAME_HEIGHT - cardH) / 2;
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0b1020, 0.5);
+    bg.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    bg.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT),
+      Phaser.Geom.Rectangle.Contains
+    );
+    bg.on("pointerdown", () => {
+      this.registry.set(REG_UI_MODAL_OPEN, false);
+      this.optionsOverlay.setVisible(false);
+    });
+
+    const card = this.add.graphics();
+    card.fillStyle(0xffffff, 1);
+    card.fillRoundedRect(cardX, cardY, cardW, cardH, 16);
+    card.lineStyle(2, 0xe5e7eb, 1);
+    card.strokeRoundedRect(cardX + 1, cardY + 1, cardW - 2, cardH - 2, 15);
+
+    const title = this.add.text(GAME_WIDTH / 2, cardY + 34, "Animation Time", {
+      fontSize: "24px",
+      color: "#111827",
+      fontStyle: "700",
+    }).setOrigin(0.5);
+
+    this.animSpeedValueText = this.add.text(GAME_WIDTH / 2, cardY + 76, "100%", {
+      fontSize: "28px",
+      color: "#111827",
+      fontStyle: "700",
+    }).setOrigin(0.5);
+
+    const sliderX = cardX + 26;
+    const sliderY = cardY + 116;
+    const sliderW = cardW - 52;
+    const sliderH = 8;
+    this.animSliderX = sliderX;
+    this.animSliderY = sliderY;
+    this.animSliderW = sliderW;
+    this.animSliderH = sliderH;
+    const knobR = 12;
+
+    const sliderTrackBg = this.add.graphics();
+    sliderTrackBg.fillStyle(0xe5e7eb, 1);
+    sliderTrackBg.fillRoundedRect(sliderX, sliderY, sliderW, sliderH, 4);
+
+    this.animSliderFill = this.add.graphics();
+    this.animSliderKnob = this.add.circle(sliderX + sliderW / 2, sliderY + sliderH / 2, knobR, 0x2563eb);
+    this.animSliderKnob.setStrokeStyle(3, 0xffffff, 1);
+
+    const sliderHit = this.add.zone(sliderX, sliderY - 12, sliderW, sliderH + 24).setOrigin(0, 0);
+    sliderHit.setInteractive({ useHandCursor: true });
+
+    const note = this.add.text(GAME_WIDTH / 2, cardY + 146, "0% ~ 200% (100% default)", {
+      fontSize: "12px",
+      color: "#6b7280",
+    }).setOrigin(0.5);
+
+    const textSizeLabel = this.add.text(cardX + 26, cardY + 176, "Text Size", {
+      fontSize: "15px",
+      color: "#111827",
+      fontStyle: "700",
+    }).setOrigin(0, 0.5);
+
+    const textMinusBtn = this.add.text(cardX + cardW - 120, cardY + 176, "−", {
+      fontSize: "24px",
+      color: "#111827",
+      fontStyle: "700",
+      backgroundColor: "#eef2ff",
+    }).setOrigin(0.5).setPadding(14, 2).setInteractive({ useHandCursor: true });
+
+    this.textSizeOffsetValueText = this.add.text(cardX + cardW - 72, cardY + 176, "0", {
+      fontSize: "20px",
+      color: "#111827",
+      fontStyle: "700",
+    }).setOrigin(0.5);
+
+    const textPlusBtn = this.add.text(cardX + cardW - 26, cardY + 176, "+", {
+      fontSize: "24px",
+      color: "#111827",
+      fontStyle: "700",
+      backgroundColor: "#eef2ff",
+    }).setOrigin(0.5).setPadding(10, 2).setInteractive({ useHandCursor: true });
+
+    const setFromPosition = (pointerX: number): void => {
+      const ratio = Phaser.Math.Clamp((pointerX - sliderX) / sliderW, 0, 1);
+      const next = Math.round(ratio * 200);
+      this.registry.set(REG_ANIM_SPEED_PERCENT, next);
+      setAnimationSpeedPercent(next);
+      this.syncAnimationSlider(next, sliderX, sliderY, sliderW, sliderH);
+    };
+
+    sliderHit.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      setFromPosition(p.x);
+    });
+
+    this.animSliderKnob.setInteractive({ useHandCursor: true, draggable: true });
+    this.input.setDraggable(this.animSliderKnob);
+    this.animSliderKnob.on("drag", (p: Phaser.Input.Pointer) => {
+      setFromPosition(p.x);
+    });
+
+    textMinusBtn.on("pointerdown", () => this.setTextSizeOffsetStep(this.textSizeOffset - 1));
+    textPlusBtn.on("pointerdown", () => this.setTextSizeOffsetStep(this.textSizeOffset + 1));
+
+    const speedRaw = this.registry.get(REG_ANIM_SPEED_PERCENT);
+    const speed = typeof speedRaw === "number" ? speedRaw : 100;
+    this.syncAnimationSlider(speed, sliderX, sliderY, sliderW, sliderH);
+
+    this.optionsOverlay = this.add.container(0, 0, [
+      bg,
+      card,
+      title,
+      this.animSpeedValueText,
+      sliderTrackBg,
+      this.animSliderFill,
+      this.animSliderKnob,
+      sliderHit,
+      note,
+      textSizeLabel,
+      textMinusBtn,
+      this.textSizeOffsetValueText,
+      textPlusBtn,
+    ]);
+    this.optionsOverlay.setDepth(1000);
+    this.optionsOverlay.setVisible(false);
+  }
+
+  private syncAnimationSlider(
+    value: number,
+    sliderX: number,
+    sliderY: number,
+    sliderW: number,
+    sliderH: number
+  ): void {
+    const clamped = Phaser.Math.Clamp(value, 0, 200);
+    const ratio = clamped / 200;
+    const filledW = Math.max(0, Math.round(sliderW * ratio));
+    this.animSpeedValueText.setText(`${clamped}%`);
+    this.animSliderFill.clear();
+    this.animSliderFill.fillStyle(0x60a5fa, 1);
+    this.animSliderFill.fillRoundedRect(sliderX, sliderY, filledW, sliderH, 4);
+    this.animSliderKnob.setPosition(sliderX + sliderW * ratio, sliderY + sliderH / 2);
+  }
+
+  private initTextResizeState(): void {
+    this.children.list.forEach((obj) => {
+      if (!(obj instanceof Phaser.GameObjects.Text)) return;
+      const px = parseInt(String(obj.style.fontSize), 10);
+      const base = Number.isFinite(px) ? px : 14;
+      obj.setData("baseFontSize", base);
+    });
+    const raw = this.registry.get(REG_TEXT_SIZE_OFFSET);
+    const offset = typeof raw === "number" ? raw : 0;
+    this.setTextSizeOffsetStep(offset, false);
+  }
+
+  private getMinBaseFontSize(): number {
+    let minBase = Number.POSITIVE_INFINITY;
+    this.children.list.forEach((obj) => {
+      if (!(obj instanceof Phaser.GameObjects.Text)) return;
+      const base = Number(obj.getData("baseFontSize"));
+      if (Number.isFinite(base)) minBase = Math.min(minBase, base);
+    });
+    return Number.isFinite(minBase) ? minBase : 1;
+  }
+
+  private setTextSizeOffsetStep(next: number, persist = true): void {
+    const minBase = this.getMinBaseFontSize();
+    const minOffset = 1 - minBase; // ensure font size never goes below 1
+    const clamped = Math.max(minOffset, Math.min(200, Math.round(next)));
+    this.textSizeOffset = clamped;
+    this.registry.set(REG_TEXT_SIZE_OFFSET, clamped);
+    if (persist) {
+      setTextSizeOffset(clamped);
+    }
+    if (this.textSizeOffsetValueText) {
+      this.textSizeOffsetValueText.setText(String(clamped));
+    }
+    this.children.list.forEach((obj) => {
+      if (!(obj instanceof Phaser.GameObjects.Text)) return;
+      const base = Number(obj.getData("baseFontSize"));
+      if (!Number.isFinite(base)) return;
+      obj.setFontSize(`${Math.max(1, base + clamped)}px`);
+    });
+  }
+
   private refreshFromRegistry(): void {
     const score = this.registry.get(REG_SCORE) as number;
     const best = this.registry.get(REG_BEST) as number;
@@ -268,6 +502,21 @@ export class UIScene extends Phaser.Scene {
     this.scoreText.setText(String(score));
     this.bestText.setText("Best: " + best);
     if (this.hintText) this.hintText.setVisible(score === 0);
+    const speedRaw = this.registry.get(REG_ANIM_SPEED_PERCENT);
+    const speed = typeof speedRaw === "number" ? speedRaw : 100;
+    if (this.animSpeedValueText) this.animSpeedValueText.setText(`${speed}%`);
+    if (this.animSliderFill && this.animSliderKnob) {
+      this.syncAnimationSlider(
+        speed,
+        this.animSliderX,
+        this.animSliderY,
+        this.animSliderW,
+        this.animSliderH
+      );
+    }
+    if (this.textSizeOffsetValueText) {
+      this.textSizeOffsetValueText.setText(String(this.textSizeOffset));
+    }
 
     const winDismissed = this.registry.get(REG_WIN_DISMISSED) as boolean;
     this.winOverlay.setVisible(hasWon && !gameOver && !winDismissed);
