@@ -227,14 +227,30 @@ export class GameScene extends Phaser.Scene {
   private applyLv1ShaderUniforms(image: Phaser.GameObjects.Image): void {
     const preset = LV1_SHADER_PRESETS[this.lv1ShaderPresetKey];
     const pipeline = image.pipeline as unknown as {
-      setFloat3: (name: string, x: number, y: number, z: number) => void;
-      setFloat1: (name: string, value: number) => void;
+      set3f?: (name: string, x: number, y: number, z: number) => void;
+      set1f?: (name: string, value: number) => void;
+      setFloat3?: (name: string, x: number, y: number, z: number) => void;
+      setFloat1?: (name: string, value: number) => void;
     };
-    pipeline.setFloat3("uBaseRed", preset.baseRed[0], preset.baseRed[1], preset.baseRed[2]);
-    pipeline.setFloat1("uAlphaMin", preset.alphaMin);
-    pipeline.setFloat1("uAlphaMax", preset.alphaMax);
-    pipeline.setFloat1("uDarkLumThreshold", preset.darkLumThreshold);
-    pipeline.setFloat1("uStrength", preset.strength);
+
+    if (pipeline.set3f) {
+      pipeline.set3f("uBaseRed", preset.baseRed[0], preset.baseRed[1], preset.baseRed[2]);
+    } else if (pipeline.setFloat3) {
+      pipeline.setFloat3("uBaseRed", preset.baseRed[0], preset.baseRed[1], preset.baseRed[2]);
+    }
+
+    const setScalar = (name: string, value: number): void => {
+      if (pipeline.set1f) {
+        pipeline.set1f(name, value);
+      } else if (pipeline.setFloat1) {
+        pipeline.setFloat1(name, value);
+      }
+    };
+
+    setScalar("uAlphaMin", preset.alphaMin);
+    setScalar("uAlphaMax", preset.alphaMax);
+    setScalar("uDarkLumThreshold", preset.darkLumThreshold);
+    setScalar("uStrength", preset.strength);
   }
 
   private setLv1ShaderPreset(presetKey: keyof typeof LV1_SHADER_PRESETS): void {
