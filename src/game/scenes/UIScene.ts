@@ -21,6 +21,7 @@ import {
   REG_UI_MODAL_OPEN,
   REG_QUICK_RESET_ENABLED,
   REG_SWIPE_THRESHOLD,
+  REG_WIN_EFFECT_DONE,
 } from "../registry";
 import { setAnimationSpeedPercent, setTextBaseSize, setQuickResetEnabled, setSwipeThreshold } from "../storage";
 
@@ -46,6 +47,7 @@ export class UIScene extends Phaser.Scene {
   private static readonly DEFAULT_TEXT_BASE_SIZE = 15;
   private quickResetEnabled = false;
   private quickResetValueText!: Phaser.GameObjects.Text;
+  private heroPulseOverlay!: Phaser.GameObjects.Rectangle;
   private swipeThresholdValueText!: Phaser.GameObjects.Text;
   private swipeSliderFill!: Phaser.GameObjects.Graphics;
   private swipeSliderKnob!: Phaser.GameObjects.Arc;
@@ -69,6 +71,7 @@ export class UIScene extends Phaser.Scene {
     this.refreshFromRegistry();
     // Listen to global game events so GameScene can notify us.
     this.game.events.on("stateChanged", this.refreshFromRegistry, this);
+    this.game.events.on("rainbowClimax", this.playRainbowHeroPulse, this);
   }
 
   private drawHeader(): void {
@@ -171,7 +174,28 @@ export class UIScene extends Phaser.Scene {
     g.fillEllipse(300, cloudY + 10, 45, 24);
     g.fillEllipse(325, cloudY + 5, 38, 20);
     g.fillEllipse(315, cloudY + 12, 40, 18);
+    this.heroPulseOverlay = this.add.rectangle(
+      GAME_WIDTH / 2,
+      HERO_TOP + HERO_HEIGHT / 2,
+      GAME_WIDTH,
+      HERO_HEIGHT,
+      0xffffff,
+      0
+    );
+    this.heroPulseOverlay.setDepth(5);
 
+  }
+
+  private playRainbowHeroPulse(): void {
+    if (!this.heroPulseOverlay) return;
+    this.heroPulseOverlay.setAlpha(0);
+    this.tweens.add({
+      targets: this.heroPulseOverlay,
+      alpha: { from: 0, to: 0.18 },
+      yoyo: true,
+      duration: 180,
+      ease: "Sine.easeOut",
+    });
   }
 
   private drawOverlays(): void {
@@ -310,7 +334,7 @@ export class UIScene extends Phaser.Scene {
 
   private drawOptionsOverlay(): void {
     const cardW = GAME_WIDTH - 72;
-    const cardH = 340;
+    const cardH = 376;
     const cardX = (GAME_WIDTH - cardW) / 2;
     const cardY = (GAME_HEIGHT - cardH) / 2;
 
@@ -486,6 +510,20 @@ export class UIScene extends Phaser.Scene {
     this.input.setDraggable(this.swipeSliderKnob);
     this.swipeSliderKnob.on("drag", (p: Phaser.Input.Pointer) => setSwipeFromPosition(p.x));
 
+    const previewBtn = this.add.text(GAME_WIDTH / 2, cardY + 328, "Preview", {
+      fontSize: "15px",
+      color: "#ffffff",
+      fontStyle: "700",
+      backgroundColor: "#7c3aed",
+      stroke: "#5b21b6",
+      strokeThickness: 1,
+    }).setOrigin(0.5).setPadding(18, 8).setInteractive({ useHandCursor: true });
+    previewBtn.on("pointerdown", () => {
+      this.registry.set(REG_UI_MODAL_OPEN, false);
+      this.optionsOverlay.setVisible(false);
+      this.game.events.emit("previewRainbowClimax");
+    });
+
     const speedRaw = this.registry.get(REG_ANIM_SPEED_PERCENT);
     const speed = typeof speedRaw === "number" ? speedRaw : 100;
     this.syncAnimationSlider(speed, sliderX, sliderY, sliderW, sliderH);
@@ -515,6 +553,7 @@ export class UIScene extends Phaser.Scene {
       this.swipeSliderFill,
       this.swipeSliderKnob,
       swipeHit,
+      previewBtn,
     ]);
     this.optionsOverlay.setDepth(1000);
     this.optionsOverlay.setVisible(false);
@@ -686,6 +725,7 @@ export class UIScene extends Phaser.Scene {
     const best = this.registry.get(REG_BEST) as number;
     const gameOver = this.registry.get(REG_GAMEOVER) as boolean;
     const hasWon = this.registry.get(REG_HASWON) as boolean;
+    const winEffectDone = this.registry.get(REG_WIN_EFFECT_DONE) as boolean;
 
     this.scoreText.setText(String(score));
     this.bestText.setText("Best: " + best);
@@ -709,7 +749,7 @@ export class UIScene extends Phaser.Scene {
     this.setQuickResetState(Boolean(quickRaw), false);
 
     const winDismissed = this.registry.get(REG_WIN_DISMISSED) as boolean;
-    this.winOverlay.setVisible(hasWon && !gameOver && !winDismissed);
+    this.winOverlay.setVisible(hasWon && !gameOver && !winDismissed && winEffectDone);
     this.gameOverOverlay.setVisible(gameOver);
   }
 }

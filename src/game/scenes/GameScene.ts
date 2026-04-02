@@ -12,7 +12,7 @@ import {
   CELL_SIZE,
   COLORS,
 } from "../config/layout";
-import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON, REG_WIN_DISMISSED, REG_ANIM_SPEED_PERCENT, REG_UI_MODAL_OPEN, REG_SWIPE_THRESHOLD } from "../registry";
+import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON, REG_WIN_DISMISSED, REG_ANIM_SPEED_PERCENT, REG_UI_MODAL_OPEN, REG_SWIPE_THRESHOLD, REG_WIN_EFFECT_DONE } from "../registry";
 
 // 타일이 셀의 약 70~75%를 차지하도록 약간 크게 설정.
 const TILE_SIZE_RATIO = 0.51;
@@ -32,6 +32,7 @@ const LV1_SHADER_PRESET: Lv1ShaderPreset = {
   darkLumThreshold: 0.34,
   strength: 0.55,
 };
+const PREVIEW_RAINBOW_CLIMAX_ON_CREATE = false;
 
 export class GameScene extends Phaser.Scene {
   private boardGraphics!: Phaser.GameObjects.Graphics;
@@ -47,8 +48,10 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     this.ensureLv1Pipeline();
     this.game.events.on("clearBufferedInput", this.clearBufferedInput, this);
+    this.game.events.on("previewRainbowClimax", this.playRainbowPreview, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off("clearBufferedInput", this.clearBufferedInput, this);
+      this.game.events.off("previewRainbowClimax", this.playRainbowPreview, this);
     });
     if (this.game.renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
       // Apply stronger edge anti-aliasing at output stage (keeps source textures unchanged).
@@ -57,6 +60,13 @@ export class GameScene extends Phaser.Scene {
     this.boardGraphics = this.add.graphics();
     this.refreshBoard();
     this.setupInput();
+    if (PREVIEW_RAINBOW_CLIMAX_ON_CREATE) {
+      this.time.delayedCall(250, () => {
+        const cx = BOARD_MARGIN + BOARD_CELL_GAP + CELL_SIZE / 2;
+        const cy = BOARD_TOP + BOARD_CELL_GAP + CELL_SIZE / 2;
+        this.playRainbowMergeFx(cx, cy, 8, 30, () => {});
+      });
+    }
   }
 
   private setupInput(): void {
@@ -126,6 +136,115 @@ export class GameScene extends Phaser.Scene {
     this.bufferedDirection = null;
   }
 
+  private playRainbowPreview(): void {
+    const cx = BOARD_MARGIN + BOARD_CELL_GAP + CELL_SIZE + BOARD_CELL_GAP + CELL_SIZE / 2;
+    const cy = BOARD_TOP + BOARD_CELL_GAP + CELL_SIZE + BOARD_CELL_GAP + CELL_SIZE / 2;
+    this.playRainbowMergeFx(cx, cy, 8, 30, () => {});
+  }
+
+  private playRainbowMergeSound(): void {
+    const webAudio = (this.sound as unknown as { context?: AudioContext }).context;
+    if (!webAudio) return;
+    const now = webAudio.currentTime;
+    const createTone = (freq: number, start: number, duration: number, gainValue: number): void => {
+      const osc = webAudio.createOscillator();
+      const gain = webAudio.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(freq, start);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.08, start + duration);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(gainValue, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      osc.connect(gain);
+      gain.connect(webAudio.destination);
+      osc.start(start);
+      osc.stop(start + duration + 0.01);
+    };
+    createTone(720, now, 0.16, 0.03);
+    createTone(960, now + 0.06, 0.14, 0.028);
+  }
+
+  private playRainbowMergeFx(
+    cx: number,
+    cy: number,
+    level: number,
+    depth: number,
+    onDone: () => void
+  ): void {
+    const container = this.add.container(cx, cy);
+    container.setDepth(depth);
+    const tile = this.createTileImage(0, 0, level, depth + 1);
+    container.add(tile);
+
+    const burst = this.add.graphics();
+    const colors = [0xff5f6d, 0xffb347, 0xffe066, 0x6ee7b7, 0x60a5fa, 0xa78bfa];
+    const ringR = Math.max(18, Math.round(CELL_SIZE * 0.24));
+    colors.forEach((color, i) => {
+      burst.lineStyle(2, color, 0.35);
+      burst.strokeCircle(0, 0, ringR + i * 1.5);
+    });
+    burst.setScale(0.6);
+    burst.setAlpha(0.35);
+    burst.setDepth(depth);
+    container.add(burst);
+
+    const sparkleCount = 8;
+    for (let i = 0; i < sparkleCount; i++) {
+      const angle = (Math.PI * 2 * i) / sparkleCount + Phaser.Math.FloatBetween(-0.14, 0.14);
+      const distance = Phaser.Math.Between(20, 36);
+      const sparkle = this.add.rectangle(0, 0, Phaser.Math.Between(3, 6), Phaser.Math.Between(2, 3), 0xffffff, 0.95);
+      sparkle.setRotation(angle);
+      sparkle.setDepth(depth + 2);
+      container.add(sparkle);
+      this.tweens.add({
+        targets: sparkle,
+        x: Math.cos(angle) * distance,
+        y: Math.sin(angle) * distance,
+        alpha: 0,
+        scale: 0.2,
+        duration: Phaser.Math.Between(220, 280),
+        ease: "Sine.easeOut",
+      });
+    }
+
+    this.playRainbowMergeSound();
+    this.game.events.emit("rainbowClimax");
+    this.tweens.add({
+      targets: container,
+      scale: 1.25,
+      duration: 110,
+      ease: "Back.Out",
+      onComplete: () => {
+        this.tweens.add({
+          targets: container,
+          scale: 0.96,
+          duration: 55,
+          ease: "Sine.easeInOut",
+          onComplete: () => {
+            this.tweens.add({
+              targets: container,
+              scale: 1.0,
+              duration: 55,
+              ease: "Sine.easeOut",
+              onComplete: () => {},
+            });
+          },
+        });
+      },
+    });
+    this.tweens.add({
+      targets: burst,
+      scale: 1.5,
+      alpha: 0,
+      duration: 260,
+      ease: "Sine.easeOut",
+    });
+    this.time.delayedCall(260, () => {
+      container.destroy(true);
+      onDone();
+    });
+  }
+
   private getAnimationMultiplier(): number {
     const percentRaw = this.registry.get(REG_ANIM_SPEED_PERCENT);
     const percent = typeof percentRaw === "number" ? percentRaw : 100;
@@ -165,6 +284,8 @@ export class GameScene extends Phaser.Scene {
 
     this.registry.set(REG_GAMEOVER, isGameOver(result.board));
     this.registry.set(REG_HASWON, hasWon(result.board));
+    const hasRainbowMerge = result.merged.some(({ row, col }) => result.board[row][col] >= 8);
+    this.registry.set(REG_WIN_EFFECT_DONE, !hasRainbowMerge);
     // UI(스코어, 오버레이)는 즉시 업데이트하되,
     // 보드 그래픽은 애니메이션 안에서 단계적으로 갱신한다.
     this.game.events.emit("stateChanged");
@@ -350,19 +471,33 @@ export class GameScene extends Phaser.Scene {
       // Merge pop
       merged.forEach(({ row, col }) => {
         const level = nextBoard[row][col];
-        const container = makeContainerWithLevel(row, col, level, 11);
-        const tween = this.tweens.add({
-          targets: container,
-          scale: { from: 1, to: 1.18 },
-          yoyo: true,
-          duration: mergeDuration,
-          ease: "Sine.easeOut",
-          onComplete: () => {
-            container.destroy();
+        const cx = BOARD_MARGIN + gap + col * (CELL_SIZE + gap) + CELL_SIZE / 2;
+        const cy = BOARD_TOP + gap + row * (CELL_SIZE + gap) + CELL_SIZE / 2;
+        if (level >= 8) {
+          this.playRainbowMergeFx(cx, cy, level, 11, () => {
+            // 보드 렌더 확정은 즉시 진행해 타일 공백이 생기지 않게 한다.
             onDone();
-          },
-        });
-        tweens.push(tween);
+            // 승리 오버레이만 살짝 늦게 띄운다.
+            this.time.delayedCall(120, () => {
+              this.registry.set(REG_WIN_EFFECT_DONE, true);
+              this.game.events.emit("stateChanged");
+            });
+          });
+        } else {
+          const container = makeContainerWithLevel(row, col, level, 11);
+          const tween = this.tweens.add({
+            targets: container,
+            scale: { from: 1, to: 1.18 },
+            yoyo: true,
+            duration: mergeDuration,
+            ease: "Sine.easeOut",
+            onComplete: () => {
+              container.destroy();
+              onDone();
+            },
+          });
+          tweens.push(tween);
+        }
       });
 
       // Spawn scale-in

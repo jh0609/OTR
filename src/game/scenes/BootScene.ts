@@ -15,6 +15,7 @@ import {
   REG_UI_MODAL_OPEN,
   REG_QUICK_RESET_ENABLED,
   REG_SWIPE_THRESHOLD,
+  REG_WIN_EFFECT_DONE,
 } from "../registry";
 
 export class BootScene extends Phaser.Scene {
@@ -49,6 +50,7 @@ export class BootScene extends Phaser.Scene {
     this.registry.set(REG_UI_MODAL_OPEN, false);
     this.registry.set(REG_QUICK_RESET_ENABLED, getQuickResetEnabled());
     this.registry.set(REG_SWIPE_THRESHOLD, getSwipeThreshold());
+    this.registry.set(REG_WIN_EFFECT_DONE, true);
 
     this.scene.start(SCENE_KEYS.GAME);
     this.scene.launch(SCENE_KEYS.UI);

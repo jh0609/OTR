@@ -14,3 +14,4 @@ export const REG_TEXT_BASE_SIZE = "textBaseSize";
 export const REG_UI_MODAL_OPEN = "uiModalOpen";
 export const REG_QUICK_RESET_ENABLED = "quickResetEnabled";
 export const REG_SWIPE_THRESHOLD = "swipeThreshold";
+export const REG_WIN_EFFECT_DONE = "winEffectDone";
