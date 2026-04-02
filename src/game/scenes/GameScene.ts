@@ -40,6 +40,7 @@ export class GameScene extends Phaser.Scene {
   private boardGraphics!: Phaser.GameObjects.Graphics;
   private staticTiles: Phaser.GameObjects.Image[] = [];
   private inputLocked = false;
+  private hardInputLock = false;
   private lv1PipelineReady = false;
   private bufferedDirection: "up" | "down" | "left" | "right" | null = null;
   private rainbowImpactPulse!: Phaser.GameObjects.Rectangle;
@@ -120,6 +121,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.inputLocked) {
+      if (this.hardInputLock) return;
       // Keep one latest buffered intent while animations are running.
       this.bufferedDirection = direction;
       return;
@@ -129,6 +131,7 @@ export class GameScene extends Phaser.Scene {
 
   private releaseInputLock(): void {
     this.inputLocked = false;
+    this.hardInputLock = false;
     const next = this.bufferedDirection;
     this.bufferedDirection = null;
     if (next) {
@@ -151,14 +154,13 @@ export class GameScene extends Phaser.Scene {
     const freezeMs = Math.round(100 * m);
     const mergeMs = Math.round(160 * m);
     const transformMs = Math.round(140 * m);
+    const orbitMs = Math.round(1000 * m);
     const travelMs = Math.round(380 * m);
     const absorbMs = Math.round(160 * m);
     const afterglowMs = Math.round(120 * m);
 
     const container = this.add.container(cx, cy);
     container.setDepth(depth);
-    const tile = this.createTileImage(0, 0, level, depth + 1);
-    container.add(tile);
 
     const preGlow = this.add.circle(0, 0, Math.round(CELL_SIZE * 0.32), 0xffffff, 0);
     preGlow.setDepth(depth);
@@ -176,15 +178,29 @@ export class GameScene extends Phaser.Scene {
     burst.setDepth(depth);
     container.add(burst);
 
-    const orb = this.add.circle(0, 0, Math.round(CELL_SIZE * 0.13), 0xffffff, 0);
-    orb.setScale(0.45);
-    orb.setDepth(depth + 3);
-    container.add(orb);
+    const spinHalo = this.add.graphics();
+    const haloColors = [0xff5f6d, 0xffb347, 0xffe066, 0x6ee7b7, 0x60a5fa, 0xa78bfa];
+    const haloBaseR = Math.round(CELL_SIZE * 0.23);
+    spinHalo.fillStyle(0xffffff, 0.1);
+    spinHalo.fillCircle(0, 0, haloBaseR + 10);
+    haloColors.forEach((color, i) => {
+      spinHalo.lineStyle(8, color, 0.78);
+      spinHalo.strokeCircle(0, 0, haloBaseR + i * 3);
+    });
+    spinHalo.setAlpha(0);
+    spinHalo.setDepth(depth + 1);
+    container.add(spinHalo);
 
-    const trail = this.add.graphics();
-    trail.setDepth(depth + 2);
-    container.add(trail);
-    const trailPoints: Array<{ x: number; y: number }> = [];
+    // Core orb that "forms" during fusion transform.
+    const mergeCore = this.add.circle(0, 0, Math.round(CELL_SIZE * 0.13), 0xffffff, 0);
+    mergeCore.setScale(0.2);
+    mergeCore.setDepth(depth + 2);
+    container.add(mergeCore);
+
+    const mergeShell = this.add.circle(0, 0, Math.round(CELL_SIZE * 0.2), 0x60a5fa, 0);
+    mergeShell.setScale(0.5);
+    mergeShell.setDepth(depth + 1);
+    container.add(mergeShell);
 
     const sparkleCount = 8;
     for (let i = 0; i < sparkleCount; i++) {
@@ -209,80 +225,101 @@ export class GameScene extends Phaser.Scene {
     const targetY = HERO_TOP + HERO_HEIGHT / 2 + 15;
     const ctrlX = cx + (targetX - cx) * 0.35 + Phaser.Math.Between(-26, 26);
     const ctrlY = cy + (targetY - cy) * 0.4 - 90;
-    const toLocal = (x: number, y: number): { x: number; y: number } => ({ x: x - cx, y: y - cy });
-
     const startMergePhase = (): void => {
       this.playGlobalRainbowImpact();
       this.game.events.emit("rainbowClimax");
       this.tweens.add({
         targets: container,
-        scale: { from: 1, to: 1.15 },
+        scale: { from: 1, to: 1.22 },
         yoyo: true,
+        duration: mergeMs,
+        ease: "Back.Out",
+      });
+      this.tweens.add({
+        targets: burst,
+        scale: 1.7,
+        alpha: 0,
         duration: mergeMs,
         ease: "Sine.easeOut",
       });
       this.tweens.add({
-        targets: burst,
-        scale: 1.5,
-        alpha: 0,
-        duration: mergeMs,
+        targets: mergeCore,
+        alpha: { from: 0, to: 0.95 },
+        scale: { from: 0.2, to: 0.92 },
+        duration: Math.max(120, Math.round(mergeMs * 0.9)),
+        ease: "Back.Out",
+      });
+      this.tweens.add({
+        targets: mergeShell,
+        alpha: { from: 0, to: 0.55 },
+        scale: { from: 0.5, to: 1.15 },
+        duration: Math.max(130, Math.round(mergeMs * 1.05)),
         ease: "Sine.easeOut",
       });
 
       this.time.delayedCall(mergeMs, () => {
         this.tweens.add({
-          targets: [tile, preGlow],
-          alpha: { from: 1, to: 0 },
+          targets: preGlow,
+          alpha: { from: 0.24, to: 0 },
           duration: transformMs,
           ease: "Sine.easeIn",
         });
         this.tweens.add({
-          targets: orb,
-          alpha: { from: 0, to: 0.95 },
-          scale: { from: 0.45, to: 1.05 },
+          targets: mergeCore,
+          alpha: { from: 0.95, to: 0.8 },
+          scale: { from: 0.92, to: 1.08 },
           duration: transformMs,
+          ease: "Sine.easeInOut",
+        });
+        this.tweens.add({
+          targets: mergeShell,
+          alpha: { from: 0.55, to: 0.12 },
+          scale: { from: 1.15, to: 1.45 },
+          duration: transformMs,
+          ease: "Sine.easeOut",
+        });
+        this.tweens.add({
+          targets: spinHalo,
+          alpha: { from: 0, to: 0.9 },
+          duration: Math.min(220, transformMs),
           ease: "Sine.easeOut",
         });
 
         this.time.delayedCall(transformMs, () => {
-          const travelTween = this.tweens.addCounter({
-            from: 0,
-            to: 1,
-            duration: travelMs,
+          this.tweens.add({
+            targets: spinHalo,
+            angle: 360,
+            duration: orbitMs,
             ease: "Sine.easeInOut",
-            onUpdate: (tw) => {
-              const t = tw.getValue();
-              const x = (1 - t) * (1 - t) * cx + 2 * (1 - t) * t * ctrlX + t * t * targetX;
-              const y = (1 - t) * (1 - t) * cy + 2 * (1 - t) * t * ctrlY + t * t * targetY;
-              const local = toLocal(x, y);
-              orb.setPosition(local.x, local.y);
-              trailPoints.push(local);
-              if (trailPoints.length > 8) trailPoints.shift();
-              trail.clear();
-              trailPoints.forEach((p, i) => {
-                const a = (i + 1) / trailPoints.length;
-                trail.fillStyle(0xffffff, a * 0.2);
-                trail.fillCircle(p.x, p.y, 2 + a * 2);
-              });
-            },
             onComplete: () => {
-              this.game.events.emit("rainbowAbsorb");
-              this.tweens.add({
-                targets: orb,
-                alpha: 0,
-                scale: 1.3,
-                duration: absorbMs,
-                ease: "Sine.easeOut",
+              this.tweens.add({ targets: spinHalo, alpha: 0, duration: 140, ease: "Sine.easeOut" });
+              this.game.events.emit("rainbowTravelStart", {
+                x: cx,
+                y: cy,
+              });
+              const travelTween = this.tweens.addCounter({
+                from: 0,
+                to: 1,
+                duration: travelMs,
+                ease: "Sine.easeInOut",
+                onUpdate: (tw) => {
+                  const t = tw.getValue();
+                  const x = (1 - t) * (1 - t) * cx + 2 * (1 - t) * t * ctrlX + t * t * targetX;
+                  const y = (1 - t) * (1 - t) * cy + 2 * (1 - t) * t * ctrlY + t * t * targetY;
+                  this.game.events.emit("rainbowTravelUpdate", { x, y });
+                },
                 onComplete: () => {
-                  this.time.delayedCall(afterglowMs, () => {
+                  this.game.events.emit("rainbowTravelComplete");
+                  this.game.events.emit("rainbowAbsorb");
+                  this.time.delayedCall(absorbMs + afterglowMs, () => {
                     container.destroy(true);
                     onDone();
                   });
                 },
               });
+              void travelTween;
             },
           });
-          void travelTween;
         });
       });
     };
@@ -357,7 +394,12 @@ export class GameScene extends Phaser.Scene {
     this.registry.set(REG_GAMEOVER, isGameOver(result.board));
     this.registry.set(REG_HASWON, hasWon(result.board));
     const hasRainbowMerge = result.merged.some(({ row, col }) => result.board[row][col] >= 8);
-    this.registry.set(REG_WIN_EFFECT_DONE, !hasRainbowMerge);
+    const hasRainbowFusion = result.rainbowMerged.length > 0;
+    if (hasRainbowFusion) {
+      this.hardInputLock = true;
+      this.bufferedDirection = null;
+    }
+    this.registry.set(REG_WIN_EFFECT_DONE, !(hasRainbowMerge || hasRainbowFusion));
     // UI(스코어, 오버레이)는 즉시 업데이트하되,
     // 보드 그래픽은 애니메이션 안에서 단계적으로 갱신한다.
     this.game.events.emit("stateChanged");
@@ -367,6 +409,7 @@ export class GameScene extends Phaser.Scene {
       result.board,
       result.traces,
       result.merged,
+      result.rainbowMerged,
       result.spawnedAt ?? null
     );
   }
@@ -403,7 +446,22 @@ export class GameScene extends Phaser.Scene {
         const cx = BOARD_MARGIN + gap + c * (CELL_SIZE + gap) + CELL_SIZE / 2;
         const cy = BOARD_TOP + gap + r * (CELL_SIZE + gap) + CELL_SIZE / 2;
         const tile = this.createTileImage(cx, cy, level, 5);
+        tile.setDataEnabled();
+        tile.setData("row", r);
+        tile.setData("col", c);
         this.staticTiles.push(tile);
+      }
+    }
+  }
+
+  private removeStaticTileAt(row: number, col: number): void {
+    for (let i = this.staticTiles.length - 1; i >= 0; i -= 1) {
+      const tile = this.staticTiles[i];
+      const tr = tile.getData("row") as number | undefined;
+      const tc = tile.getData("col") as number | undefined;
+      if (tr === row && tc === col) {
+        tile.destroy();
+        this.staticTiles.splice(i, 1);
       }
     }
   }
@@ -487,6 +545,7 @@ export class GameScene extends Phaser.Scene {
     nextBoard: Board,
     traces: { from: { row: number; col: number }; to: { row: number; col: number }; mergedInto: boolean }[],
     merged: { row: number; col: number }[],
+    rainbowMerged: { row: number; col: number }[],
     spawnedAt: { row: number; col: number } | null
   ): void {
     const gap = BOARD_CELL_GAP;
@@ -511,7 +570,9 @@ export class GameScene extends Phaser.Scene {
 
     const runFinishPhase = () => {
       const tweens: Phaser.Tweens.Tween[] = [];
-      const finishTargets = merged.length + (spawnedAt ? 1 : 0);
+      const hasRainbowFusionFx = rainbowMerged.length > 0;
+      const shouldAnimateSpawn = Boolean(spawnedAt && !hasRainbowFusionFx);
+      const finishTargets = merged.length + rainbowMerged.length + (shouldAnimateSpawn ? 1 : 0);
       if (finishTargets === 0) {
         this.releaseInputLock();
         return;
@@ -521,12 +582,17 @@ export class GameScene extends Phaser.Scene {
       // 작은 점에서 커지는 효과가 더 잘 보이도록 한다.
       let baseBoard: Board = nextBoard;
       if (spawnedAt) {
-        const { row, col } = spawnedAt;
         const temp: number[][] = nextBoard.map((r) => [...r]);
-        temp[row][col] = 0;
+        if (spawnedAt) {
+          const { row, col } = spawnedAt;
+          temp[row][col] = 0;
+        }
         baseBoard = temp as unknown as Board;
       }
-      this.renderBoard(baseBoard);
+      // For rainbow fusion, keep board frozen until FX completes to avoid mid-animation flicker.
+      if (!hasRainbowFusionFx) {
+        this.renderBoard(baseBoard);
+      }
 
       let finished = 0;
       const onDone = () => {
@@ -539,12 +605,15 @@ export class GameScene extends Phaser.Scene {
           this.releaseInputLock();
         }
       };
+      const toWorld = (row: number, col: number): { x: number; y: number } => ({
+        x: BOARD_MARGIN + gap + col * (CELL_SIZE + gap) + CELL_SIZE / 2,
+        y: BOARD_TOP + gap + row * (CELL_SIZE + gap) + CELL_SIZE / 2,
+      });
 
       // Merge pop
       merged.forEach(({ row, col }) => {
         const level = nextBoard[row][col];
-        const cx = BOARD_MARGIN + gap + col * (CELL_SIZE + gap) + CELL_SIZE / 2;
-        const cy = BOARD_TOP + gap + row * (CELL_SIZE + gap) + CELL_SIZE / 2;
+        const { x: cx, y: cy } = toWorld(row, col);
         if (level >= 8) {
           this.playRainbowMergeFx(cx, cy, level, 11, () => {
             // 보드 렌더 확정은 즉시 진행해 타일 공백이 생기지 않게 한다.
@@ -572,8 +641,24 @@ export class GameScene extends Phaser.Scene {
         }
       });
 
+      // Rainbow fusion (8+8 -> absorbed)
+      rainbowMerged.forEach(({ row, col }) => {
+        // Consume the board tile immediately at fusion start.
+        this.removeStaticTileAt(row, col);
+        const { x: cx, y: cy } = toWorld(row, col);
+        this.playRainbowMergeFx(cx, cy, 8, 11, () => {
+          onDone();
+          this.time.delayedCall(120, () => {
+            this.registry.set(REG_WIN_EFFECT_DONE, true);
+            this.game.events.emit("stateChanged");
+          });
+        });
+      });
+
       // Spawn scale-in
-      if (spawnedAt) {
+      // During rainbow fusion, defer spawn visibility to final board render
+      // to avoid "appear -> disappear -> reappear" flicker.
+      if (shouldAnimateSpawn && spawnedAt) {
         const { row, col } = spawnedAt;
         const level = nextBoard[row][col];
         const container = makeContainerWithLevel(row, col, level, 11);
@@ -606,6 +691,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    const rainbowFusionTargetKeys = new Set(rainbowMerged.map(({ row, col }) => `${row},${col}`));
     const moveTweens: Phaser.Tweens.Tween[] = [];
     let movesCompleted = 0;
     moveTraces.forEach((trace) => {
@@ -613,23 +699,60 @@ export class GameScene extends Phaser.Scene {
       const container = makeContainerWithLevel(trace.from.row, trace.from.col, level, 12);
       const destX = BOARD_MARGIN + gap + trace.to.col * (CELL_SIZE + gap) + CELL_SIZE / 2;
       const destY = BOARD_TOP + gap + trace.to.row * (CELL_SIZE + gap) + CELL_SIZE / 2;
+      const isRainbowFusionMove =
+        level === 8 &&
+        trace.mergedInto &&
+        rainbowFusionTargetKeys.has(`${trace.to.row},${trace.to.col}`);
+      const completeMove = () => {
+        container.destroy();
+        movesCompleted += 1;
+        if (movesCompleted >= moveTraces.length) {
+          moveTweens.forEach((t) => t.remove());
+          runFinishPhase();
+        }
+      };
 
-      const tween = this.tweens.add({
-        targets: container,
-        x: destX,
-        y: destY,
-        duration: moveDuration,
-        ease: "Sine.easeInOut",
-        onComplete: () => {
-          container.destroy();
-          movesCompleted += 1;
-          if (movesCompleted >= moveTraces.length) {
-            moveTweens.forEach((t) => t.remove());
-            runFinishPhase();
-          }
-        },
-      });
-      moveTweens.push(tween);
+      if (isRainbowFusionMove) {
+        // Remove both source and fusion-target static tiles immediately
+        // so no temporary center tile flashes during rainbow fusion movement.
+        this.removeStaticTileAt(trace.from.row, trace.from.col);
+        this.removeStaticTileAt(trace.to.row, trace.to.col);
+        const startX = container.x;
+        const startY = container.y;
+        const ctrlX = (startX + destX) / 2 + Phaser.Math.Between(-10, 10);
+        const ctrlY = (startY + destY) / 2 - 18;
+        const rainbowMoveTween = this.tweens.addCounter({
+          from: 0,
+          to: 1,
+          duration: Math.round(moveDuration * 1.3),
+          ease: "Sine.easeInOut",
+          onUpdate: (tw) => {
+            const t = tw.getValue();
+            container.x = (1 - t) * (1 - t) * startX + 2 * (1 - t) * t * ctrlX + t * t * destX;
+            container.y = (1 - t) * (1 - t) * startY + 2 * (1 - t) * t * ctrlY + t * t * destY;
+            container.rotation = Phaser.Math.DegToRad(10) * Math.sin(Math.PI * t);
+          },
+          onComplete: completeMove,
+        });
+        const pulseTween = this.tweens.add({
+          targets: container,
+          scale: { from: 0.96, to: 1.16 },
+          yoyo: true,
+          duration: Math.round(moveDuration * 0.72),
+          ease: "Cubic.easeInOut",
+        });
+        moveTweens.push(rainbowMoveTween, pulseTween);
+      } else {
+        const tween = this.tweens.add({
+          targets: container,
+          x: destX,
+          y: destY,
+          duration: moveDuration,
+          ease: "Sine.easeInOut",
+          onComplete: completeMove,
+        });
+        moveTweens.push(tween);
+      }
     });
   }
 }

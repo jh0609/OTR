@@ -27,17 +27,21 @@ export function applyMove(board: Board, direction: Direction): MoveResult {
   let next: Cell[][] = copyBoard(board);
   let totalScore = 0;
   const merged: CellPosition[] = [];
+  const rainbowMerged: CellPosition[] = [];
   const traces: MoveTrace[] = [];
 
   if (direction === "left" || direction === "right") {
     const slide = direction === "left" ? slideRowLeft : slideRowRight;
     for (let r = 0; r < 3; r++) {
       const row = getRow(board, r);
-      const { row: newRow, score, mergedIndices, indexTraces } = slide(row);
+      const { row: newRow, score, mergedIndices, rainbowMergedIndices, indexTraces } = slide(row);
       totalScore += score;
       next = setRow(next as Board, r, newRow);
       for (const c of mergedIndices) {
         merged.push({ row: r, col: c });
+      }
+      for (const c of rainbowMergedIndices) {
+        rainbowMerged.push({ row: r, col: c });
       }
       for (const t of indexTraces) {
         traces.push({
@@ -51,11 +55,14 @@ export function applyMove(board: Board, direction: Direction): MoveResult {
     const slide = direction === "up" ? slideColumnUp : slideColumnDown;
     for (let c = 0; c < 3; c++) {
       const col = getColumn(board, c);
-      const { col: newCol, score, mergedIndices, indexTraces } = slide(col);
+      const { col: newCol, score, mergedIndices, rainbowMergedIndices, indexTraces } = slide(col);
       totalScore += score;
       next = setColumn(next as Board, c, newCol);
       for (const r of mergedIndices) {
         merged.push({ row: r, col: c });
+      }
+      for (const r of rainbowMergedIndices) {
+        rainbowMerged.push({ row: r, col: c });
       }
       for (const t of indexTraces) {
         traces.push({
@@ -73,6 +80,7 @@ export function applyMove(board: Board, direction: Direction): MoveResult {
     scoreDelta: totalScore,
     changed,
     merged,
+    rainbowMerged,
     traces,
   };
 }

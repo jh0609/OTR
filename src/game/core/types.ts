@@ -41,6 +41,7 @@ export interface MoveResult {
   readonly scoreDelta: number;
   readonly changed: boolean;
   readonly merged: CellPosition[];
+  readonly rainbowMerged: CellPosition[];
   readonly traces: MoveTrace[];
 }
 
@@ -51,6 +52,7 @@ export interface StepResult {
   readonly changed: boolean;
   readonly spawnedAt: { row: number; col: number } | null;
   readonly merged: CellPosition[];
+  readonly rainbowMerged: CellPosition[];
   readonly traces: MoveTrace[];
 }
 

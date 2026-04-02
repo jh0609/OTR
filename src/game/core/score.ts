@@ -19,3 +19,8 @@ const MERGE_SCORE: Record<TileLevel, number> = {
 export function getMergeScore(level: TileLevel): number {
   return MERGE_SCORE[level];
 }
+
+/** Special score for rainbow + rainbow fusion (8+8 -> absorbed). */
+export function getRainbowFusionScore(): number {
+  return 256;
+}

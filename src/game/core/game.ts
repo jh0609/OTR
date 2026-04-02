@@ -47,6 +47,7 @@ export function step(
       changed: false,
       spawnedAt: null,
       merged: [],
+      rainbowMerged: [],
       traces: [],
     };
   }
@@ -57,6 +58,7 @@ export function step(
     changed: true,
     spawnedAt: spawnResult.spawnedAt,
     merged: moveResult.merged,
+    rainbowMerged: moveResult.rainbowMerged,
     traces: moveResult.traces,
   };
 }

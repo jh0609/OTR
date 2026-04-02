@@ -46,6 +46,9 @@ export class UIScene extends Phaser.Scene {
   private quickResetValueText!: Phaser.GameObjects.Text;
   private heroPulseOverlay!: Phaser.GameObjects.Rectangle;
   private heroAbsorbShimmer!: Phaser.GameObjects.Arc;
+  private rainbowTravelOrb: Phaser.GameObjects.Container | null = null;
+  private rainbowTravelTrail: Phaser.GameObjects.Graphics | null = null;
+  private rainbowTravelPoints: Array<{ x: number; y: number }> = [];
   private swipeThresholdValueText!: Phaser.GameObjects.Text;
   private swipeSliderFill!: Phaser.GameObjects.Graphics;
   private swipeSliderKnob!: Phaser.GameObjects.Arc;
@@ -71,10 +74,16 @@ export class UIScene extends Phaser.Scene {
     this.game.events.on("stateChanged", this.refreshFromRegistry, this);
     this.game.events.on("rainbowClimax", this.playRainbowHeroPulse, this);
     this.game.events.on("rainbowAbsorb", this.playRainbowAbsorbReaction, this);
+    this.game.events.on("rainbowTravelStart", this.onRainbowTravelStart, this);
+    this.game.events.on("rainbowTravelUpdate", this.onRainbowTravelUpdate, this);
+    this.game.events.on("rainbowTravelComplete", this.onRainbowTravelComplete, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off("stateChanged", this.refreshFromRegistry, this);
       this.game.events.off("rainbowClimax", this.playRainbowHeroPulse, this);
       this.game.events.off("rainbowAbsorb", this.playRainbowAbsorbReaction, this);
+      this.game.events.off("rainbowTravelStart", this.onRainbowTravelStart, this);
+      this.game.events.off("rainbowTravelUpdate", this.onRainbowTravelUpdate, this);
+      this.game.events.off("rainbowTravelComplete", this.onRainbowTravelComplete, this);
     });
   }
 
@@ -215,6 +224,63 @@ export class UIScene extends Phaser.Scene {
       yoyo: true,
       duration: 160,
       ease: "Sine.easeOut",
+    });
+  }
+
+  private onRainbowTravelStart(payload: { x: number; y: number }): void {
+    if (this.rainbowTravelOrb) this.rainbowTravelOrb.destroy();
+    if (this.rainbowTravelTrail) this.rainbowTravelTrail.destroy();
+    this.rainbowTravelPoints = [];
+    void payload;
+  }
+
+  private onRainbowTravelUpdate(payload: { x: number; y: number }): void {
+    if (!this.rainbowTravelOrb || !this.rainbowTravelTrail) {
+      const orb = this.add.container(payload.x, payload.y);
+      orb.setDepth(30);
+      orb.setScale(0.75);
+      orb.setAlpha(0.95);
+      const aura = this.add.circle(0, 0, 24, 0x60a5fa, 0.35);
+      const shell = this.add.circle(0, 0, 18, 0xffffff, 0.92);
+      const core = this.add.circle(0, 0, 12, 0xf472b6, 0.78);
+      const highlight = this.add.circle(-5, -6, 4, 0xffffff, 0.9);
+      orb.add([aura, shell, core, highlight]);
+      this.rainbowTravelOrb = orb;
+
+      const trail = this.add.graphics();
+      trail.setDepth(29);
+      this.rainbowTravelTrail = trail;
+    }
+    if (!this.rainbowTravelOrb || !this.rainbowTravelTrail) return;
+    this.rainbowTravelOrb.setPosition(payload.x, payload.y);
+    this.rainbowTravelPoints.push({ x: payload.x, y: payload.y });
+    if (this.rainbowTravelPoints.length > 10) this.rainbowTravelPoints.shift();
+    this.rainbowTravelTrail.clear();
+    this.rainbowTravelPoints.forEach((p, i) => {
+      const a = (i + 1) / this.rainbowTravelPoints.length;
+      this.rainbowTravelTrail?.fillStyle(0xffffff, a * 0.23);
+      this.rainbowTravelTrail?.fillCircle(p.x, p.y, 2 + a * 2.6);
+    });
+  }
+
+  private onRainbowTravelComplete(): void {
+    if (!this.rainbowTravelOrb) return;
+    const orb = this.rainbowTravelOrb;
+    this.tweens.add({
+      targets: orb,
+      alpha: 0,
+      scale: 1.25,
+      duration: 160,
+      ease: "Sine.easeOut",
+      onComplete: () => {
+        orb.destroy();
+        this.rainbowTravelOrb = null;
+        if (this.rainbowTravelTrail) {
+          this.rainbowTravelTrail.destroy();
+          this.rainbowTravelTrail = null;
+        }
+        this.rainbowTravelPoints = [];
+      },
     });
   }
 
