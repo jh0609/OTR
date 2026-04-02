@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import type { Board } from "../core/types";
 import { SCENE_KEYS } from "../constants";
+import { GAME_WIDTH } from "../config";
 import { step as coreStep, isGameOver, hasWon, getEmptyCount } from "../core";
 import { setBestScore } from "../storage";
 import { TILE_TEXTURE_BY_LEVEL } from "../assets";
@@ -10,9 +11,11 @@ import {
   BOARD_TOP,
   BOARD_CELL_GAP,
   CELL_SIZE,
+  HERO_TOP,
+  HERO_HEIGHT,
   COLORS,
 } from "../config/layout";
-import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON, REG_WIN_DISMISSED, REG_ANIM_SPEED_PERCENT, REG_UI_MODAL_OPEN, REG_SWIPE_THRESHOLD, REG_WIN_EFFECT_DONE } from "../registry";
+import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON, REG_ANIM_SPEED_PERCENT, REG_UI_MODAL_OPEN, REG_SWIPE_THRESHOLD, REG_WIN_EFFECT_DONE } from "../registry";
 
 // 타일이 셀의 약 70~75%를 차지하도록 약간 크게 설정.
 const TILE_SIZE_RATIO = 0.51;
@@ -137,28 +140,6 @@ export class GameScene extends Phaser.Scene {
     this.bufferedDirection = null;
   }
 
-  private playRainbowMergeSound(): void {
-    const webAudio = (this.sound as unknown as { context?: AudioContext }).context;
-    if (!webAudio) return;
-    const now = webAudio.currentTime;
-    const createTone = (freq: number, start: number, duration: number, gainValue: number): void => {
-      const osc = webAudio.createOscillator();
-      const gain = webAudio.createGain();
-      osc.type = "triangle";
-      osc.frequency.setValueAtTime(freq, start);
-      osc.frequency.exponentialRampToValueAtTime(freq * 1.08, start + duration);
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(gainValue, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-      osc.connect(gain);
-      gain.connect(webAudio.destination);
-      osc.start(start);
-      osc.stop(start + duration + 0.01);
-    };
-    createTone(720, now, 0.16, 0.03);
-    createTone(960, now + 0.06, 0.14, 0.028);
-  }
-
   private playRainbowMergeFx(
     cx: number,
     cy: number,
@@ -166,10 +147,22 @@ export class GameScene extends Phaser.Scene {
     depth: number,
     onDone: () => void
   ): void {
+    const m = Phaser.Math.Clamp(this.getAnimationMultiplier(), 0.8, 1.4);
+    const freezeMs = Math.round(100 * m);
+    const mergeMs = Math.round(160 * m);
+    const transformMs = Math.round(140 * m);
+    const travelMs = Math.round(380 * m);
+    const absorbMs = Math.round(160 * m);
+    const afterglowMs = Math.round(120 * m);
+
     const container = this.add.container(cx, cy);
     container.setDepth(depth);
     const tile = this.createTileImage(0, 0, level, depth + 1);
     container.add(tile);
+
+    const preGlow = this.add.circle(0, 0, Math.round(CELL_SIZE * 0.32), 0xffffff, 0);
+    preGlow.setDepth(depth);
+    container.addAt(preGlow, 0);
 
     const burst = this.add.graphics();
     const colors = [0xff5f6d, 0xffb347, 0xffe066, 0x6ee7b7, 0x60a5fa, 0xa78bfa];
@@ -182,6 +175,16 @@ export class GameScene extends Phaser.Scene {
     burst.setAlpha(0.35);
     burst.setDepth(depth);
     container.add(burst);
+
+    const orb = this.add.circle(0, 0, Math.round(CELL_SIZE * 0.13), 0xffffff, 0);
+    orb.setScale(0.45);
+    orb.setDepth(depth + 3);
+    container.add(orb);
+
+    const trail = this.add.graphics();
+    trail.setDepth(depth + 2);
+    container.add(trail);
+    const trailPoints: Array<{ x: number; y: number }> = [];
 
     const sparkleCount = 8;
     for (let i = 0; i < sparkleCount; i++) {
@@ -202,42 +205,96 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
-    this.playRainbowMergeSound();
-    this.game.events.emit("rainbowClimax");
-    this.playGlobalRainbowImpact();
-    this.tweens.add({
-      targets: container,
-      scale: 1.25,
-      duration: 110,
-      ease: "Back.Out",
-      onComplete: () => {
+    const targetX = GAME_WIDTH / 2;
+    const targetY = HERO_TOP + HERO_HEIGHT / 2 + 15;
+    const ctrlX = cx + (targetX - cx) * 0.35 + Phaser.Math.Between(-26, 26);
+    const ctrlY = cy + (targetY - cy) * 0.4 - 90;
+    const toLocal = (x: number, y: number): { x: number; y: number } => ({ x: x - cx, y: y - cy });
+
+    const startMergePhase = (): void => {
+      this.playGlobalRainbowImpact();
+      this.game.events.emit("rainbowClimax");
+      this.tweens.add({
+        targets: container,
+        scale: { from: 1, to: 1.15 },
+        yoyo: true,
+        duration: mergeMs,
+        ease: "Sine.easeOut",
+      });
+      this.tweens.add({
+        targets: burst,
+        scale: 1.5,
+        alpha: 0,
+        duration: mergeMs,
+        ease: "Sine.easeOut",
+      });
+
+      this.time.delayedCall(mergeMs, () => {
         this.tweens.add({
-          targets: container,
-          scale: 0.96,
-          duration: 55,
-          ease: "Sine.easeInOut",
-          onComplete: () => {
-            this.tweens.add({
-              targets: container,
-              scale: 1.0,
-              duration: 55,
-              ease: "Sine.easeOut",
-              onComplete: () => {},
-            });
-          },
+          targets: [tile, preGlow],
+          alpha: { from: 1, to: 0 },
+          duration: transformMs,
+          ease: "Sine.easeIn",
         });
-      },
-    });
+        this.tweens.add({
+          targets: orb,
+          alpha: { from: 0, to: 0.95 },
+          scale: { from: 0.45, to: 1.05 },
+          duration: transformMs,
+          ease: "Sine.easeOut",
+        });
+
+        this.time.delayedCall(transformMs, () => {
+          const travelTween = this.tweens.addCounter({
+            from: 0,
+            to: 1,
+            duration: travelMs,
+            ease: "Sine.easeInOut",
+            onUpdate: (tw) => {
+              const t = tw.getValue();
+              const x = (1 - t) * (1 - t) * cx + 2 * (1 - t) * t * ctrlX + t * t * targetX;
+              const y = (1 - t) * (1 - t) * cy + 2 * (1 - t) * t * ctrlY + t * t * targetY;
+              const local = toLocal(x, y);
+              orb.setPosition(local.x, local.y);
+              trailPoints.push(local);
+              if (trailPoints.length > 8) trailPoints.shift();
+              trail.clear();
+              trailPoints.forEach((p, i) => {
+                const a = (i + 1) / trailPoints.length;
+                trail.fillStyle(0xffffff, a * 0.2);
+                trail.fillCircle(p.x, p.y, 2 + a * 2);
+              });
+            },
+            onComplete: () => {
+              this.game.events.emit("rainbowAbsorb");
+              this.tweens.add({
+                targets: orb,
+                alpha: 0,
+                scale: 1.3,
+                duration: absorbMs,
+                ease: "Sine.easeOut",
+                onComplete: () => {
+                  this.time.delayedCall(afterglowMs, () => {
+                    container.destroy(true);
+                    onDone();
+                  });
+                },
+              });
+            },
+          });
+          void travelTween;
+        });
+      });
+    };
+
+    // Phase 1: brief anticipation freeze with soft brightening.
     this.tweens.add({
-      targets: burst,
-      scale: 1.5,
-      alpha: 0,
-      duration: 260,
+      targets: preGlow,
+      alpha: { from: 0, to: 0.24 },
+      yoyo: true,
+      duration: freezeMs,
       ease: "Sine.easeOut",
-    });
-    this.time.delayedCall(260, () => {
-      container.destroy(true);
-      onDone();
+      onComplete: startMergePhase,
     });
   }
 
@@ -274,9 +331,6 @@ export class GameScene extends Phaser.Scene {
     if (gameOver) return;
     const modalOpen = this.registry.get(REG_UI_MODAL_OPEN) as boolean;
     if (modalOpen) return;
-    const hasWonNow = this.registry.get(REG_HASWON) as boolean;
-    const winDismissed = this.registry.get(REG_WIN_DISMISSED) as boolean;
-    if (hasWonNow && !winDismissed) return;
 
     const board = this.registry.get(REG_BOARD) as Board;
     this.inputLocked = true;

@@ -14,14 +14,11 @@ import {
   REG_SCORE,
   REG_BEST,
   REG_GAMEOVER,
-  REG_HASWON,
-  REG_WIN_DISMISSED,
   REG_ANIM_SPEED_PERCENT,
   REG_TEXT_BASE_SIZE,
   REG_UI_MODAL_OPEN,
   REG_QUICK_RESET_ENABLED,
   REG_SWIPE_THRESHOLD,
-  REG_WIN_EFFECT_DONE,
 } from "../registry";
 import { setAnimationSpeedPercent, setTextBaseSize, setQuickResetEnabled, setSwipeThreshold } from "../storage";
 
@@ -48,6 +45,7 @@ export class UIScene extends Phaser.Scene {
   private quickResetEnabled = false;
   private quickResetValueText!: Phaser.GameObjects.Text;
   private heroPulseOverlay!: Phaser.GameObjects.Rectangle;
+  private heroAbsorbShimmer!: Phaser.GameObjects.Arc;
   private swipeThresholdValueText!: Phaser.GameObjects.Text;
   private swipeSliderFill!: Phaser.GameObjects.Graphics;
   private swipeSliderKnob!: Phaser.GameObjects.Arc;
@@ -72,6 +70,12 @@ export class UIScene extends Phaser.Scene {
     // Listen to global game events so GameScene can notify us.
     this.game.events.on("stateChanged", this.refreshFromRegistry, this);
     this.game.events.on("rainbowClimax", this.playRainbowHeroPulse, this);
+    this.game.events.on("rainbowAbsorb", this.playRainbowAbsorbReaction, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.game.events.off("stateChanged", this.refreshFromRegistry, this);
+      this.game.events.off("rainbowClimax", this.playRainbowHeroPulse, this);
+      this.game.events.off("rainbowAbsorb", this.playRainbowAbsorbReaction, this);
+    });
   }
 
   private drawHeader(): void {
@@ -183,6 +187,8 @@ export class UIScene extends Phaser.Scene {
       0
     );
     this.heroPulseOverlay.setDepth(5);
+    this.heroAbsorbShimmer = this.add.circle(GAME_WIDTH / 2, arcY, Math.round(arcRadius * 0.42), 0xffffff, 0);
+    this.heroAbsorbShimmer.setDepth(6);
 
   }
 
@@ -194,6 +200,20 @@ export class UIScene extends Phaser.Scene {
       alpha: { from: 0, to: 0.18 },
       yoyo: true,
       duration: 180,
+      ease: "Sine.easeOut",
+    });
+  }
+
+  private playRainbowAbsorbReaction(): void {
+    if (!this.heroAbsorbShimmer) return;
+    this.heroAbsorbShimmer.setAlpha(0);
+    this.heroAbsorbShimmer.setScale(0.9);
+    this.tweens.add({
+      targets: this.heroAbsorbShimmer,
+      alpha: { from: 0, to: 0.22 },
+      scale: { from: 0.9, to: 1.06 },
+      yoyo: true,
+      duration: 160,
       ease: "Sine.easeOut",
     });
   }
@@ -318,7 +338,6 @@ export class UIScene extends Phaser.Scene {
 
       continueBtn.on("pointerdown", () => {
         this.game.events.emit("clearBufferedInput");
-        this.registry.set(REG_WIN_DISMISSED, true);
         this.winOverlay.setVisible(false);
       });
       restartBtn.on("pointerdown", () => this.scene.start(SCENE_KEYS.BOOT));
@@ -709,8 +728,6 @@ export class UIScene extends Phaser.Scene {
     const score = this.registry.get(REG_SCORE) as number;
     const best = this.registry.get(REG_BEST) as number;
     const gameOver = this.registry.get(REG_GAMEOVER) as boolean;
-    const hasWon = this.registry.get(REG_HASWON) as boolean;
-    const winEffectDone = this.registry.get(REG_WIN_EFFECT_DONE) as boolean;
 
     this.scoreText.setText(String(score));
     this.bestText.setText("Best: " + best);
@@ -733,8 +750,7 @@ export class UIScene extends Phaser.Scene {
     const quickRaw = this.registry.get(REG_QUICK_RESET_ENABLED);
     this.setQuickResetState(Boolean(quickRaw), false);
 
-    const winDismissed = this.registry.get(REG_WIN_DISMISSED) as boolean;
-    this.winOverlay.setVisible(hasWon && !gameOver && !winDismissed && winEffectDone);
+    this.winOverlay.setVisible(false);
     this.gameOverOverlay.setVisible(gameOver);
   }
 }
