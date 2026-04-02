@@ -394,7 +394,17 @@ export class GameScene extends Phaser.Scene {
     this.registry.set(REG_GAMEOVER, isGameOver(result.board));
     this.registry.set(REG_HASWON, hasWon(result.board));
     const hasRainbowMerge = result.merged.some(({ row, col }) => result.board[row][col] >= 8);
-    const hasRainbowFusion = result.rainbowMerged.length > 0;
+    const verifiedRainbowFusion = result.rainbowMerged.filter(({ row, col }) => {
+      const sources = result.traces.filter(
+        (t) =>
+          t.mergedInto &&
+          t.to.row === row &&
+          t.to.col === col &&
+          board[t.from.row][t.from.col] === 8
+      );
+      return sources.length >= 2;
+    });
+    const hasRainbowFusion = verifiedRainbowFusion.length > 0;
     if (hasRainbowFusion) {
       this.hardInputLock = true;
       this.bufferedDirection = null;
@@ -409,7 +419,7 @@ export class GameScene extends Phaser.Scene {
       result.board,
       result.traces,
       result.merged,
-      result.rainbowMerged,
+      verifiedRainbowFusion,
       result.spawnedAt ?? null
     );
   }
