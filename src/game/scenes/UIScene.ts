@@ -417,12 +417,12 @@ export class UIScene extends Phaser.Scene {
       fontStyle: "700",
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
-    const swipeLabel = this.add.text(cardX + 26, cardY + 252, "Sensitivity", {
+    const swipeLabel = this.add.text(cardX + 26, cardY + 252, "Swipe Distance", {
       fontSize: "15px",
       color: "#111827",
       fontStyle: "700",
     }).setOrigin(0, 0.5);
-    this.swipeThresholdValueText = this.add.text(cardX + cardW - 26, cardY + 252, "55", {
+    this.swipeThresholdValueText = this.add.text(cardX + cardW - 26, cardY + 252, "40", {
       fontSize: "20px",
       color: "#111827",
       fontStyle: "700",
@@ -490,7 +490,7 @@ export class UIScene extends Phaser.Scene {
     const speed = typeof speedRaw === "number" ? speedRaw : 100;
     this.syncAnimationSlider(speed, sliderX, sliderY, sliderW, sliderH);
     const swipeRaw = this.registry.get(REG_SWIPE_THRESHOLD);
-    const swipe = typeof swipeRaw === "number" ? swipeRaw : 55;
+    const swipe = typeof swipeRaw === "number" ? swipeRaw : 40;
     this.syncSwipeSlider(swipe, swipeSliderX, swipeSliderY, swipeSliderW, swipeSliderH);
 
     this.optionsOverlay = this.add.container(0, 0, [
@@ -639,7 +639,7 @@ export class UIScene extends Phaser.Scene {
     const quickRaw = this.registry.get(REG_QUICK_RESET_ENABLED);
     this.setQuickResetState(Boolean(quickRaw), false);
     const swipeRaw = this.registry.get(REG_SWIPE_THRESHOLD);
-    const swipe = typeof swipeRaw === "number" ? swipeRaw : 55;
+    const swipe = typeof swipeRaw === "number" ? swipeRaw : 40;
     if (this.swipeSliderFill && this.swipeSliderKnob) {
       this.syncSwipeSlider(
         swipe,

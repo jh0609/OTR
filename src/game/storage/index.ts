@@ -64,10 +64,10 @@ export function setQuickResetEnabled(enabled: boolean): void {
 }
 
 export function getSwipeThreshold(): number {
-  if (typeof window === "undefined" || !window.localStorage) return 55;
+  if (typeof window === "undefined" || !window.localStorage) return 40;
   const raw = window.localStorage.getItem(SWIPE_THRESHOLD_KEY);
   const n = parseInt(raw ?? "", 10);
-  if (!Number.isFinite(n)) return 55;
+  if (!Number.isFinite(n)) return 40;
   return Math.max(10, Math.min(100, n));
 }
 

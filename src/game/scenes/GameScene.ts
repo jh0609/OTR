@@ -87,7 +87,7 @@ export class GameScene extends Phaser.Scene {
       const adx = Math.abs(dx);
       const ady = Math.abs(dy);
       const thresholdRaw = this.registry.get(REG_SWIPE_THRESHOLD);
-      const swipeThreshold = typeof thresholdRaw === "number" ? thresholdRaw : 55;
+      const swipeThreshold = typeof thresholdRaw === "number" ? thresholdRaw : 40;
       if (adx > ady && adx >= swipeThreshold) {
         this.enqueueMove(dx > 0 ? "right" : "left");
       } else if (ady >= swipeThreshold) {
