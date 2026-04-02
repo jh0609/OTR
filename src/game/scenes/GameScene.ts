@@ -40,6 +40,7 @@ export class GameScene extends Phaser.Scene {
   private inputLocked = false;
   private lv1PipelineReady = false;
   private bufferedDirection: "up" | "down" | "left" | "right" | null = null;
+  private rainbowImpactPulse!: Phaser.GameObjects.Rectangle;
 
   constructor() {
     super({ key: SCENE_KEYS.GAME });
@@ -58,6 +59,16 @@ export class GameScene extends Phaser.Scene {
       this.cameras.main.setPostPipeline("FXAA");
     }
     this.boardGraphics = this.add.graphics();
+    this.rainbowImpactPulse = this.add.rectangle(
+      this.scale.width / 2,
+      this.scale.height / 2,
+      this.scale.width,
+      this.scale.height,
+      0xffffff,
+      0
+    );
+    this.rainbowImpactPulse.setDepth(40);
+    this.rainbowImpactPulse.setScrollFactor(0);
     this.refreshBoard();
     this.setupInput();
     if (PREVIEW_RAINBOW_CLIMAX_ON_CREATE) {
@@ -209,6 +220,7 @@ export class GameScene extends Phaser.Scene {
 
     this.playRainbowMergeSound();
     this.game.events.emit("rainbowClimax");
+    this.playGlobalRainbowImpact();
     this.tweens.add({
       targets: container,
       scale: 1.25,
@@ -242,6 +254,28 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(260, () => {
       container.destroy(true);
       onDone();
+    });
+  }
+
+  private playGlobalRainbowImpact(): void {
+    if (this.rainbowImpactPulse) {
+      this.rainbowImpactPulse.setAlpha(0);
+      this.tweens.add({
+        targets: this.rainbowImpactPulse,
+        alpha: { from: 0, to: 0.12 },
+        yoyo: true,
+        duration: 80,
+        ease: "Sine.easeOut",
+      });
+    }
+
+    const cam = this.cameras.main;
+    this.tweens.add({
+      targets: cam,
+      zoom: 1.02,
+      yoyo: true,
+      duration: 75,
+      ease: "Sine.easeOut",
     });
   }
 
