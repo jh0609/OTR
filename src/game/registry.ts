@@ -13,3 +13,4 @@ export const REG_ANIM_SPEED_PERCENT = "animSpeedPercent";
 export const REG_TEXT_BASE_SIZE = "textBaseSize";
 export const REG_UI_MODAL_OPEN = "uiModalOpen";
 export const REG_QUICK_RESET_ENABLED = "quickResetEnabled";
+export const REG_SWIPE_THRESHOLD = "swipeThreshold";

@@ -20,8 +20,9 @@ import {
   REG_TEXT_BASE_SIZE,
   REG_UI_MODAL_OPEN,
   REG_QUICK_RESET_ENABLED,
+  REG_SWIPE_THRESHOLD,
 } from "../registry";
-import { setAnimationSpeedPercent, setTextBaseSize, setQuickResetEnabled } from "../storage";
+import { setAnimationSpeedPercent, setTextBaseSize, setQuickResetEnabled, setSwipeThreshold } from "../storage";
 
 const CLOSE_BTN_SIZE = 44;
 
@@ -45,6 +46,13 @@ export class UIScene extends Phaser.Scene {
   private static readonly DEFAULT_TEXT_BASE_SIZE = 15;
   private quickResetEnabled = false;
   private quickResetValueText!: Phaser.GameObjects.Text;
+  private swipeThresholdValueText!: Phaser.GameObjects.Text;
+  private swipeSliderFill!: Phaser.GameObjects.Graphics;
+  private swipeSliderKnob!: Phaser.GameObjects.Arc;
+  private swipeSliderX = 0;
+  private swipeSliderY = 0;
+  private swipeSliderW = 0;
+  private swipeSliderH = 0;
 
   constructor() {
     super({ key: SCENE_KEYS.UI });
@@ -302,7 +310,7 @@ export class UIScene extends Phaser.Scene {
 
   private drawOptionsOverlay(): void {
     const cardW = GAME_WIDTH - 72;
-    const cardH = 278;
+    const cardH = 340;
     const cardX = (GAME_WIDTH - cardW) / 2;
     const cardY = (GAME_HEIGHT - cardH) / 2;
 
@@ -409,6 +417,34 @@ export class UIScene extends Phaser.Scene {
       fontStyle: "700",
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
+    const swipeLabel = this.add.text(cardX + 26, cardY + 252, "Sensitivity", {
+      fontSize: "15px",
+      color: "#111827",
+      fontStyle: "700",
+    }).setOrigin(0, 0.5);
+    this.swipeThresholdValueText = this.add.text(cardX + cardW - 26, cardY + 252, "55", {
+      fontSize: "20px",
+      color: "#111827",
+      fontStyle: "700",
+    }).setOrigin(0.5);
+
+    const swipeSliderX = cardX + 26;
+    const swipeSliderY = cardY + 276;
+    const swipeSliderW = cardW - 52;
+    const swipeSliderH = 8;
+    this.swipeSliderX = swipeSliderX;
+    this.swipeSliderY = swipeSliderY;
+    this.swipeSliderW = swipeSliderW;
+    this.swipeSliderH = swipeSliderH;
+    const swipeTrackBg = this.add.graphics();
+    swipeTrackBg.fillStyle(0xe5e7eb, 1);
+    swipeTrackBg.fillRoundedRect(swipeSliderX, swipeSliderY, swipeSliderW, swipeSliderH, 4);
+    this.swipeSliderFill = this.add.graphics();
+    this.swipeSliderKnob = this.add.circle(swipeSliderX, swipeSliderY + swipeSliderH / 2, 12, 0x2563eb);
+    this.swipeSliderKnob.setStrokeStyle(3, 0xffffff, 1);
+    const swipeHit = this.add.zone(swipeSliderX, swipeSliderY - 12, swipeSliderW, swipeSliderH + 24).setOrigin(0, 0);
+    swipeHit.setInteractive({ useHandCursor: true });
+
     const setFromPosition = (pointerX: number): void => {
       const ratio = Phaser.Math.Clamp((pointerX - sliderX) / sliderW, 0, 1);
       const next = Math.round(ratio * 200);
@@ -434,10 +470,28 @@ export class UIScene extends Phaser.Scene {
     textMinusBtn.on("pointerdown", () => this.setTextBaseSizeStep(this.textBaseSize - 1));
     textPlusBtn.on("pointerdown", () => this.setTextBaseSizeStep(this.textBaseSize + 1));
     this.quickResetValueText.on("pointerdown", () => this.setQuickResetState(!this.quickResetEnabled));
+    const setSwipeFromPosition = (pointerX: number): void => {
+      const ratio = Phaser.Math.Clamp((pointerX - swipeSliderX) / swipeSliderW, 0, 1);
+      const next = Math.round(10 + ratio * (100 - 10));
+      this.registry.set(REG_SWIPE_THRESHOLD, next);
+      setSwipeThreshold(next);
+      this.syncSwipeSlider(next, swipeSliderX, swipeSliderY, swipeSliderW, swipeSliderH);
+    };
+    swipeHit.on("pointerdown", (p: Phaser.Input.Pointer) => setSwipeFromPosition(p.x));
+    swipeHit.on("pointermove", (p: Phaser.Input.Pointer) => {
+      if (!p.isDown) return;
+      setSwipeFromPosition(p.x);
+    });
+    this.swipeSliderKnob.setInteractive({ useHandCursor: true, draggable: true });
+    this.input.setDraggable(this.swipeSliderKnob);
+    this.swipeSliderKnob.on("drag", (p: Phaser.Input.Pointer) => setSwipeFromPosition(p.x));
 
     const speedRaw = this.registry.get(REG_ANIM_SPEED_PERCENT);
     const speed = typeof speedRaw === "number" ? speedRaw : 100;
     this.syncAnimationSlider(speed, sliderX, sliderY, sliderW, sliderH);
+    const swipeRaw = this.registry.get(REG_SWIPE_THRESHOLD);
+    const swipe = typeof swipeRaw === "number" ? swipeRaw : 55;
+    this.syncSwipeSlider(swipe, swipeSliderX, swipeSliderY, swipeSliderW, swipeSliderH);
 
     this.optionsOverlay = this.add.container(0, 0, [
       bg,
@@ -455,6 +509,12 @@ export class UIScene extends Phaser.Scene {
       textPlusBtn,
       quickLabel,
       this.quickResetValueText,
+      swipeLabel,
+      this.swipeThresholdValueText,
+      swipeTrackBg,
+      this.swipeSliderFill,
+      this.swipeSliderKnob,
+      swipeHit,
     ]);
     this.optionsOverlay.setDepth(1000);
     this.optionsOverlay.setVisible(false);
@@ -549,6 +609,23 @@ export class UIScene extends Phaser.Scene {
     this.animSliderKnob.setPosition(sliderX + sliderW * ratio, sliderY + sliderH / 2);
   }
 
+  private syncSwipeSlider(
+    value: number,
+    sliderX: number,
+    sliderY: number,
+    sliderW: number,
+    sliderH: number
+  ): void {
+    const clamped = Phaser.Math.Clamp(value, 10, 100);
+    const ratio = (clamped - 10) / (100 - 10);
+    const filledW = Math.max(0, Math.round(sliderW * ratio));
+    this.swipeThresholdValueText.setText(String(clamped));
+    this.swipeSliderFill.clear();
+    this.swipeSliderFill.fillStyle(0x60a5fa, 1);
+    this.swipeSliderFill.fillRoundedRect(sliderX, sliderY, filledW, sliderH, 4);
+    this.swipeSliderKnob.setPosition(sliderX + sliderW * ratio, sliderY + sliderH / 2);
+  }
+
   private initTextResizeState(): void {
     this.children.list.forEach((obj) => {
       if (!(obj instanceof Phaser.GameObjects.Text)) return;
@@ -561,6 +638,17 @@ export class UIScene extends Phaser.Scene {
     this.setTextBaseSizeStep(size, false);
     const quickRaw = this.registry.get(REG_QUICK_RESET_ENABLED);
     this.setQuickResetState(Boolean(quickRaw), false);
+    const swipeRaw = this.registry.get(REG_SWIPE_THRESHOLD);
+    const swipe = typeof swipeRaw === "number" ? swipeRaw : 55;
+    if (this.swipeSliderFill && this.swipeSliderKnob) {
+      this.syncSwipeSlider(
+        swipe,
+        this.swipeSliderX,
+        this.swipeSliderY,
+        this.swipeSliderW,
+        this.swipeSliderH
+      );
+    }
   }
 
   private setTextBaseSizeStep(next: number, persist = true): void {

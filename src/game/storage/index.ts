@@ -7,6 +7,7 @@ const ANIM_SPEED_KEY = "otr-anim-speed-percent";
 const TEXT_SIZE_OFFSET_KEY = "otr-text-size-offset";
 const TEXT_BASE_SIZE_KEY = "otr-text-base-size";
 const QUICK_RESET_KEY = "otr-quick-reset-enabled";
+const SWIPE_THRESHOLD_KEY = "otr-swipe-threshold";
 
 export function getBestScore(): number {
   if (typeof window === "undefined" || !window.localStorage) return 0;
@@ -60,4 +61,18 @@ export function getQuickResetEnabled(): boolean {
 export function setQuickResetEnabled(enabled: boolean): void {
   if (typeof window === "undefined" || !window.localStorage) return;
   window.localStorage.setItem(QUICK_RESET_KEY, enabled ? "1" : "0");
+}
+
+export function getSwipeThreshold(): number {
+  if (typeof window === "undefined" || !window.localStorage) return 55;
+  const raw = window.localStorage.getItem(SWIPE_THRESHOLD_KEY);
+  const n = parseInt(raw ?? "", 10);
+  if (!Number.isFinite(n)) return 55;
+  return Math.max(10, Math.min(100, n));
+}
+
+export function setSwipeThreshold(value: number): void {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  const clamped = Math.max(10, Math.min(100, Math.round(value)));
+  window.localStorage.setItem(SWIPE_THRESHOLD_KEY, String(clamped));
 }

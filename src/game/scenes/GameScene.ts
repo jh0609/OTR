@@ -12,7 +12,7 @@ import {
   CELL_SIZE,
   COLORS,
 } from "../config/layout";
-import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON, REG_WIN_DISMISSED, REG_ANIM_SPEED_PERCENT, REG_UI_MODAL_OPEN } from "../registry";
+import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON, REG_WIN_DISMISSED, REG_ANIM_SPEED_PERCENT, REG_UI_MODAL_OPEN, REG_SWIPE_THRESHOLD } from "../registry";
 
 // 타일이 셀의 약 70~75%를 차지하도록 약간 크게 설정.
 const TILE_SIZE_RATIO = 0.51;
@@ -71,7 +71,6 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
-    const swipeThreshold = 40;
     let startX = 0;
     let startY = 0;
     let hasSwipeStart = false;
@@ -87,6 +86,8 @@ export class GameScene extends Phaser.Scene {
       const dy = p.y - startY;
       const adx = Math.abs(dx);
       const ady = Math.abs(dy);
+      const thresholdRaw = this.registry.get(REG_SWIPE_THRESHOLD);
+      const swipeThreshold = typeof thresholdRaw === "number" ? thresholdRaw : 55;
       if (adx > ady && adx >= swipeThreshold) {
         this.enqueueMove(dx > 0 ? "right" : "left");
       } else if (ady >= swipeThreshold) {
