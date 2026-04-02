@@ -510,20 +510,6 @@ export class UIScene extends Phaser.Scene {
     this.input.setDraggable(this.swipeSliderKnob);
     this.swipeSliderKnob.on("drag", (p: Phaser.Input.Pointer) => setSwipeFromPosition(p.x));
 
-    const previewBtn = this.add.text(GAME_WIDTH / 2, cardY + 328, "Preview", {
-      fontSize: "15px",
-      color: "#ffffff",
-      fontStyle: "700",
-      backgroundColor: "#7c3aed",
-      stroke: "#5b21b6",
-      strokeThickness: 1,
-    }).setOrigin(0.5).setPadding(18, 8).setInteractive({ useHandCursor: true });
-    previewBtn.on("pointerdown", () => {
-      this.registry.set(REG_UI_MODAL_OPEN, false);
-      this.optionsOverlay.setVisible(false);
-      this.game.events.emit("previewRainbowClimax");
-    });
-
     const speedRaw = this.registry.get(REG_ANIM_SPEED_PERCENT);
     const speed = typeof speedRaw === "number" ? speedRaw : 100;
     this.syncAnimationSlider(speed, sliderX, sliderY, sliderW, sliderH);
@@ -553,7 +539,6 @@ export class UIScene extends Phaser.Scene {
       this.swipeSliderFill,
       this.swipeSliderKnob,
       swipeHit,
-      previewBtn,
     ]);
     this.optionsOverlay.setDepth(1000);
     this.optionsOverlay.setVisible(false);

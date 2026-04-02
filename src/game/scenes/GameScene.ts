@@ -32,7 +32,6 @@ const LV1_SHADER_PRESET: Lv1ShaderPreset = {
   darkLumThreshold: 0.34,
   strength: 0.55,
 };
-const PREVIEW_RAINBOW_CLIMAX_ON_CREATE = false;
 
 export class GameScene extends Phaser.Scene {
   private boardGraphics!: Phaser.GameObjects.Graphics;
@@ -49,10 +48,8 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     this.ensureLv1Pipeline();
     this.game.events.on("clearBufferedInput", this.clearBufferedInput, this);
-    this.game.events.on("previewRainbowClimax", this.playRainbowPreview, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off("clearBufferedInput", this.clearBufferedInput, this);
-      this.game.events.off("previewRainbowClimax", this.playRainbowPreview, this);
     });
     if (this.game.renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
       // Apply stronger edge anti-aliasing at output stage (keeps source textures unchanged).
@@ -71,13 +68,6 @@ export class GameScene extends Phaser.Scene {
     this.rainbowImpactPulse.setScrollFactor(0);
     this.refreshBoard();
     this.setupInput();
-    if (PREVIEW_RAINBOW_CLIMAX_ON_CREATE) {
-      this.time.delayedCall(250, () => {
-        const cx = BOARD_MARGIN + BOARD_CELL_GAP + CELL_SIZE / 2;
-        const cy = BOARD_TOP + BOARD_CELL_GAP + CELL_SIZE / 2;
-        this.playRainbowMergeFx(cx, cy, 8, 30, () => {});
-      });
-    }
   }
 
   private setupInput(): void {
@@ -145,12 +135,6 @@ export class GameScene extends Phaser.Scene {
 
   private clearBufferedInput(): void {
     this.bufferedDirection = null;
-  }
-
-  private playRainbowPreview(): void {
-    const cx = BOARD_MARGIN + BOARD_CELL_GAP + CELL_SIZE + BOARD_CELL_GAP + CELL_SIZE / 2;
-    const cy = BOARD_TOP + BOARD_CELL_GAP + CELL_SIZE + BOARD_CELL_GAP + CELL_SIZE / 2;
-    this.playRainbowMergeFx(cx, cy, 8, 30, () => {});
   }
 
   private playRainbowMergeSound(): void {
