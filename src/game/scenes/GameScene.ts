@@ -613,32 +613,19 @@ export class GameScene extends Phaser.Scene {
       // Merge pop
       merged.forEach(({ row, col }) => {
         const level = nextBoard[row][col];
-        const { x: cx, y: cy } = toWorld(row, col);
-        if (level >= 8) {
-          this.playRainbowMergeFx(cx, cy, level, 11, () => {
-            // 보드 렌더 확정은 즉시 진행해 타일 공백이 생기지 않게 한다.
+        const container = makeContainerWithLevel(row, col, level, 11);
+        const tween = this.tweens.add({
+          targets: container,
+          scale: { from: 1, to: 1.18 },
+          yoyo: true,
+          duration: mergeDuration,
+          ease: "Sine.easeOut",
+          onComplete: () => {
+            container.destroy();
             onDone();
-            // 승리 오버레이만 살짝 늦게 띄운다.
-            this.time.delayedCall(120, () => {
-              this.registry.set(REG_WIN_EFFECT_DONE, true);
-              this.game.events.emit("stateChanged");
-            });
-          });
-        } else {
-          const container = makeContainerWithLevel(row, col, level, 11);
-          const tween = this.tweens.add({
-            targets: container,
-            scale: { from: 1, to: 1.18 },
-            yoyo: true,
-            duration: mergeDuration,
-            ease: "Sine.easeOut",
-            onComplete: () => {
-              container.destroy();
-              onDone();
-            },
-          });
-          tweens.push(tween);
-        }
+          },
+        });
+        tweens.push(tween);
       });
 
       // Rainbow fusion (8+8 -> absorbed)
