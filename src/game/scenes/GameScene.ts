@@ -3,7 +3,7 @@ import type { Board } from "../core/types";
 import { SCENE_KEYS } from "../constants";
 import { GAME_WIDTH } from "../config";
 import { step as coreStep, isGameOver, hasWon, getEmptyCount } from "../core";
-import { getHint, experimentCEndgameWith78Tuning, type HintSearchConfig } from "../../sim";
+import { getHint, experimentCEndgameWith78MergeTiming, type HintSearchConfig } from "../../sim";
 import { gameBoardToSim, simDirectionToGame } from "../hintBridge";
 import { copyBoard } from "../core/board";
 import { setBestScore } from "../storage";
@@ -318,7 +318,7 @@ export class GameScene extends Phaser.Scene {
 
   private hintSearchOptions(): HintSearchConfig {
     return {
-      tuning: experimentCEndgameWith78Tuning,
+      tuning: experimentCEndgameWith78MergeTiming,
       depthEarly: 5,
       beamWidthEarly: 8,
       depthLate: 12,
