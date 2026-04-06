@@ -27,6 +27,7 @@ import {
   REG_SWIPE_THRESHOLD,
   REG_WIN_EFFECT_DONE,
   REG_UNDO_AVAILABLE,
+  REG_SHOW_DRAG_TRACE,
 } from "../registry";
 
 // 타일이 셀의 약 70~75%를 차지하도록 약간 크게 설정.
@@ -131,18 +132,22 @@ export class GameScene extends Phaser.Scene {
         hasSwipeStart = false;
         return;
       }
-      this.dragTraceFadeTween?.stop();
-      this.dragTraceFadeTween = null;
-      this.dragTraceGraphics.clear();
-      this.dragTraceGraphics.setAlpha(1);
-      this.dragPoints = [{ x: p.x, y: p.y }];
-      this.dragActive = true;
       startX = p.x;
       startY = p.y;
       hasSwipeStart = true;
+      if (this.isDragTraceEnabled()) {
+        this.dragTraceFadeTween?.stop();
+        this.dragTraceFadeTween = null;
+        this.dragTraceGraphics.clear();
+        this.dragTraceGraphics.setAlpha(1);
+        this.dragPoints = [{ x: p.x, y: p.y }];
+        this.dragActive = true;
+      } else {
+        this.dragActive = false;
+      }
     });
     this.input.on("pointermove", (p: Phaser.Input.Pointer) => {
-      if (!this.dragActive || !p.isDown) return;
+      if (!this.isDragTraceEnabled() || !this.dragActive || !p.isDown) return;
       if (this.registry.get(REG_UI_MODAL_OPEN) as boolean) return;
       const last = this.dragPoints[this.dragPoints.length - 1];
       const dist = Phaser.Math.Distance.Between(last.x, last.y, p.x, p.y);
@@ -300,6 +305,10 @@ export class GameScene extends Phaser.Scene {
 
   private syncUndoAvailable(): void {
     this.registry.set(REG_UNDO_AVAILABLE, this.lastUndoSnapshot !== null);
+  }
+
+  private isDragTraceEnabled(): boolean {
+    return this.registry.get(REG_SHOW_DRAG_TRACE) === true;
   }
 
   private performUndo(): void {

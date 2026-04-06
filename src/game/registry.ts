@@ -17,3 +17,5 @@ export const REG_SWIPE_THRESHOLD = "swipeThreshold";
 export const REG_WIN_EFFECT_DONE = "winEffectDone";
 /** Whether at least one undo step is available (GameScene maintains stack). */
 export const REG_UNDO_AVAILABLE = "undoAvailable";
+/** Debug: draw swipe path + end marker (localStorage). */
+export const REG_SHOW_DRAG_TRACE = "showDragTrace";

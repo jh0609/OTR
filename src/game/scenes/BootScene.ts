@@ -1,7 +1,14 @@
 import Phaser from "phaser";
 import { SCENE_KEYS } from "../constants";
 import { initGame } from "../core";
-import { getBestScore, getAnimationSpeedPercent, getTextBaseSize, getQuickResetEnabled, getSwipeThreshold } from "../storage";
+import {
+  getBestScore,
+  getAnimationSpeedPercent,
+  getTextBaseSize,
+  getQuickResetEnabled,
+  getSwipeThreshold,
+  getShowDragTrace,
+} from "../storage";
 import { TILE_TEXTURE_SOURCES } from "../assets";
 import {
   REG_BOARD,
@@ -16,6 +23,7 @@ import {
   REG_QUICK_RESET_ENABLED,
   REG_SWIPE_THRESHOLD,
   REG_WIN_EFFECT_DONE,
+  REG_SHOW_DRAG_TRACE,
 } from "../registry";
 
 export class BootScene extends Phaser.Scene {
@@ -51,6 +59,7 @@ export class BootScene extends Phaser.Scene {
     this.registry.set(REG_UI_MODAL_OPEN, false);
     this.registry.set(REG_QUICK_RESET_ENABLED, getQuickResetEnabled());
     this.registry.set(REG_SWIPE_THRESHOLD, getSwipeThreshold());
+    this.registry.set(REG_SHOW_DRAG_TRACE, getShowDragTrace());
     this.registry.set(REG_WIN_EFFECT_DONE, true);
 
     this.scene.start(SCENE_KEYS.GAME);

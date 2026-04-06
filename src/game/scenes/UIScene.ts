@@ -20,8 +20,15 @@ import {
   REG_QUICK_RESET_ENABLED,
   REG_SWIPE_THRESHOLD,
   REG_UNDO_AVAILABLE,
+  REG_SHOW_DRAG_TRACE,
 } from "../registry";
-import { setAnimationSpeedPercent, setTextBaseSize, setQuickResetEnabled, setSwipeThreshold } from "../storage";
+import {
+  setAnimationSpeedPercent,
+  setTextBaseSize,
+  setQuickResetEnabled,
+  setSwipeThreshold,
+  setShowDragTrace,
+} from "../storage";
 
 const CLOSE_BTN_SIZE = 44;
 
@@ -58,6 +65,8 @@ export class UIScene extends Phaser.Scene {
   private swipeSliderW = 0;
   private swipeSliderH = 0;
   private undoBtn!: Phaser.GameObjects.Text;
+  private inputTraceEnabled = false;
+  private inputTraceValueText!: Phaser.GameObjects.Text;
 
   constructor() {
     super({ key: SCENE_KEYS.UI });
@@ -103,36 +112,34 @@ export class UIScene extends Phaser.Scene {
     }).setOrigin(0, 0.5);
 
     const closeX = GAME_WIDTH - 16;
-    this.undoBtn = this.add.text(closeX - 150, HEADER_HEIGHT / 2, "Undo", {
-      fontSize: "13px",
+    this.undoBtn = this.add.text(closeX - 150, HEADER_HEIGHT / 2, "\u21b6", {
+      fontSize: "20px",
       color: "#111827",
       fontStyle: "700",
       backgroundColor: "#f2f4f7",
-    }).setOrigin(1, 0.5).setPadding(10, 6).setInteractive({ useHandCursor: true });
+    }).setOrigin(1, 0.5).setPadding(12, 8).setInteractive({ useHandCursor: true });
     this.undoBtn.on("pointerdown", () => {
       this.game.events.emit("requestUndo");
     });
 
-    const optionBtn = this.add.text(closeX - 72, HEADER_HEIGHT / 2, "Option", {
-      fontSize: "13px",
+    const optionBtn = this.add.text(closeX - 78, HEADER_HEIGHT / 2, "\u2699", {
+      fontSize: "20px",
       color: "#111827",
       fontStyle: "700",
       backgroundColor: "#f2f4f7",
-    }).setOrigin(1, 0.5).setPadding(10, 6).setInteractive(
-      { useHandCursor: true }
-    );
+    }).setOrigin(1, 0.5).setPadding(12, 8).setInteractive({ useHandCursor: true });
     optionBtn.on("pointerdown", () => {
       this.registry.set(REG_UI_MODAL_OPEN, true);
       this.game.events.emit("clearBufferedInput");
       this.optionsOverlay.setVisible(true);
     });
 
-    const closeBtn = this.add.text(closeX, HEADER_HEIGHT / 2, "Reset", {
-      fontSize: "14px",
+    const closeBtn = this.add.text(closeX, HEADER_HEIGHT / 2, "↻", {
+      fontSize: "20px",
       color: "#111827",
       fontStyle: "700",
       backgroundColor: "#f2f4f7",
-    }).setOrigin(1, 0.5).setPadding(12, 7).setInteractive({ useHandCursor: true });
+    }).setOrigin(1, 0.5).setPadding(12, 8).setInteractive({ useHandCursor: true });
     closeBtn.on("pointerdown", () => {
       if (this.quickResetEnabled) {
         this.scene.start(SCENE_KEYS.BOOT);
@@ -431,7 +438,7 @@ export class UIScene extends Phaser.Scene {
 
   private drawOptionsOverlay(): void {
     const cardW = GAME_WIDTH - 72;
-    const cardH = 376;
+    const cardH = 420;
     const cardX = (GAME_WIDTH - cardW) / 2;
     const cardY = (GAME_HEIGHT - cardH) / 2;
 
@@ -566,6 +573,18 @@ export class UIScene extends Phaser.Scene {
     const swipeHit = this.add.zone(swipeSliderX, swipeSliderY - 12, swipeSliderW, swipeSliderH + 24).setOrigin(0, 0);
     swipeHit.setInteractive({ useHandCursor: true });
 
+    const traceLabel = this.add.text(cardX + 26, cardY + 312, "Input trace", {
+      fontSize: "15px",
+      color: "#111827",
+      fontStyle: "700",
+    }).setOrigin(0, 0.5);
+
+    this.inputTraceValueText = this.add.text(cardX + cardW - 26, cardY + 312, "☐", {
+      fontSize: "24px",
+      color: "#111827",
+      fontStyle: "700",
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
     const setFromPosition = (pointerX: number): void => {
       const ratio = Phaser.Math.Clamp((pointerX - sliderX) / sliderW, 0, 1);
       const next = Math.round(ratio * 200);
@@ -607,12 +626,19 @@ export class UIScene extends Phaser.Scene {
     this.input.setDraggable(this.swipeSliderKnob);
     this.swipeSliderKnob.on("drag", (p: Phaser.Input.Pointer) => setSwipeFromPosition(p.x));
 
+    this.inputTraceValueText.on("pointerdown", () => {
+      this.setInputTraceState(!this.inputTraceEnabled, true);
+    });
+
     const speedRaw = this.registry.get(REG_ANIM_SPEED_PERCENT);
     const speed = typeof speedRaw === "number" ? speedRaw : 100;
     this.syncAnimationSlider(speed, sliderX, sliderY, sliderW, sliderH);
     const swipeRaw = this.registry.get(REG_SWIPE_THRESHOLD);
     const swipe = typeof swipeRaw === "number" ? swipeRaw : 40;
     this.syncSwipeSlider(swipe, swipeSliderX, swipeSliderY, swipeSliderW, swipeSliderH);
+
+    const traceRaw = this.registry.get(REG_SHOW_DRAG_TRACE);
+    this.setInputTraceState(Boolean(traceRaw), false);
 
     this.optionsOverlay = this.add.container(0, 0, [
       bg,
@@ -636,6 +662,8 @@ export class UIScene extends Phaser.Scene {
       this.swipeSliderFill,
       this.swipeSliderKnob,
       swipeHit,
+      traceLabel,
+      this.inputTraceValueText,
     ]);
     this.optionsOverlay.setDepth(1000);
     this.optionsOverlay.setVisible(false);
@@ -791,6 +819,17 @@ export class UIScene extends Phaser.Scene {
     });
   }
 
+  private setInputTraceState(enabled: boolean, persist = true): void {
+    this.inputTraceEnabled = enabled;
+    this.registry.set(REG_SHOW_DRAG_TRACE, enabled);
+    if (persist) {
+      setShowDragTrace(enabled);
+    }
+    if (this.inputTraceValueText) {
+      this.inputTraceValueText.setText(enabled ? "☑" : "☐");
+    }
+  }
+
   private setQuickResetState(enabled: boolean, persist = true): void {
     this.quickResetEnabled = enabled;
     this.registry.set(REG_QUICK_RESET_ENABLED, enabled);
@@ -827,6 +866,10 @@ export class UIScene extends Phaser.Scene {
     }
     const quickRaw = this.registry.get(REG_QUICK_RESET_ENABLED);
     this.setQuickResetState(Boolean(quickRaw), false);
+    const traceRaw = this.registry.get(REG_SHOW_DRAG_TRACE);
+    if (this.inputTraceValueText) {
+      this.setInputTraceState(Boolean(traceRaw), false);
+    }
 
     this.winOverlay.setVisible(false);
     this.gameOverOverlay.setVisible(gameOver);

@@ -8,6 +8,7 @@ const TEXT_SIZE_OFFSET_KEY = "otr-text-size-offset";
 const TEXT_BASE_SIZE_KEY = "otr-text-base-size";
 const QUICK_RESET_KEY = "otr-quick-reset-enabled";
 const SWIPE_THRESHOLD_KEY = "otr-swipe-threshold";
+const SHOW_DRAG_TRACE_KEY = "otr-show-drag-trace";
 
 export function getBestScore(): number {
   if (typeof window === "undefined" || !window.localStorage) return 0;
@@ -75,4 +76,14 @@ export function setSwipeThreshold(value: number): void {
   if (typeof window === "undefined" || !window.localStorage) return;
   const clamped = Math.max(10, Math.min(100, Math.round(value)));
   window.localStorage.setItem(SWIPE_THRESHOLD_KEY, String(clamped));
+}
+
+export function getShowDragTrace(): boolean {
+  if (typeof window === "undefined" || !window.localStorage) return false;
+  return window.localStorage.getItem(SHOW_DRAG_TRACE_KEY) === "1";
+}
+
+export function setShowDragTrace(enabled: boolean): void {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  window.localStorage.setItem(SHOW_DRAG_TRACE_KEY, enabled ? "1" : "0");
 }
