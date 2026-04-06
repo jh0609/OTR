@@ -3,6 +3,7 @@ import type { Board } from "../core/types";
 import { SCENE_KEYS } from "../constants";
 import { GAME_WIDTH } from "../config";
 import { step as coreStep, isGameOver, hasWon, getEmptyCount } from "../core";
+import { copyBoard } from "../core/board";
 import { setBestScore } from "../storage";
 import { TILE_TEXTURE_BY_LEVEL } from "../assets";
 import { Lv1FringeFixPipeline } from "../pipelines/Lv1FringeFixPipeline";
@@ -15,7 +16,18 @@ import {
   HERO_HEIGHT,
   COLORS,
 } from "../config/layout";
-import { REG_BOARD, REG_SCORE, REG_BEST, REG_GAMEOVER, REG_HASWON, REG_ANIM_SPEED_PERCENT, REG_UI_MODAL_OPEN, REG_SWIPE_THRESHOLD, REG_WIN_EFFECT_DONE } from "../registry";
+import {
+  REG_BOARD,
+  REG_SCORE,
+  REG_BEST,
+  REG_GAMEOVER,
+  REG_HASWON,
+  REG_ANIM_SPEED_PERCENT,
+  REG_UI_MODAL_OPEN,
+  REG_SWIPE_THRESHOLD,
+  REG_WIN_EFFECT_DONE,
+  REG_UNDO_AVAILABLE,
+} from "../registry";
 
 // 타일이 셀의 약 70~75%를 차지하도록 약간 크게 설정.
 const TILE_SIZE_RATIO = 0.51;
@@ -36,6 +48,16 @@ const LV1_SHADER_PRESET: Lv1ShaderPreset = {
   strength: 0.55,
 };
 
+type UndoSnapshot = {
+  board: Board;
+  score: number;
+  gameOver: boolean;
+  hasWon: boolean;
+  winEffectDone: boolean;
+};
+
+const DRAG_TRACE_FADE_MS = 1000;
+
 export class GameScene extends Phaser.Scene {
   private boardGraphics!: Phaser.GameObjects.Graphics;
   private staticTiles: Phaser.GameObjects.Image[] = [];
@@ -44,6 +66,12 @@ export class GameScene extends Phaser.Scene {
   private lv1PipelineReady = false;
   private bufferedDirection: "up" | "down" | "left" | "right" | null = null;
   private rainbowImpactPulse!: Phaser.GameObjects.Rectangle;
+  private dragTraceGraphics!: Phaser.GameObjects.Graphics;
+  private dragPoints: Array<{ x: number; y: number }> = [];
+  private dragTraceFadeTween: Phaser.Tweens.Tween | null = null;
+  private dragActive = false;
+  /** Only the state before the last successful move can be restored. */
+  private lastUndoSnapshot: UndoSnapshot | null = null;
 
   constructor() {
     super({ key: SCENE_KEYS.GAME });
@@ -70,8 +98,15 @@ export class GameScene extends Phaser.Scene {
     );
     this.rainbowImpactPulse.setDepth(40);
     this.rainbowImpactPulse.setScrollFactor(0);
+    this.dragTraceGraphics = this.add.graphics();
+    this.dragTraceGraphics.setDepth(25);
+    this.registry.set(REG_UNDO_AVAILABLE, false);
     this.refreshBoard();
     this.setupInput();
+    this.game.events.on("requestUndo", this.performUndo, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.game.events.off("requestUndo", this.performUndo, this);
+    });
   }
 
   private setupInput(): void {
@@ -90,11 +125,40 @@ export class GameScene extends Phaser.Scene {
     let startY = 0;
     let hasSwipeStart = false;
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      const modalOpen = this.registry.get(REG_UI_MODAL_OPEN) as boolean;
+      if (modalOpen) {
+        this.dragActive = false;
+        hasSwipeStart = false;
+        return;
+      }
+      this.dragTraceFadeTween?.stop();
+      this.dragTraceFadeTween = null;
+      this.dragTraceGraphics.clear();
+      this.dragTraceGraphics.setAlpha(1);
+      this.dragPoints = [{ x: p.x, y: p.y }];
+      this.dragActive = true;
       startX = p.x;
       startY = p.y;
       hasSwipeStart = true;
     });
+    this.input.on("pointermove", (p: Phaser.Input.Pointer) => {
+      if (!this.dragActive || !p.isDown) return;
+      if (this.registry.get(REG_UI_MODAL_OPEN) as boolean) return;
+      const last = this.dragPoints[this.dragPoints.length - 1];
+      const dist = Phaser.Math.Distance.Between(last.x, last.y, p.x, p.y);
+      if (dist < 2.5) return;
+      this.dragPoints.push({ x: p.x, y: p.y });
+      this.redrawDragTracePathOnly();
+    });
     this.input.on("pointerup", (p: Phaser.Input.Pointer) => {
+      if (this.dragActive) {
+        const last = this.dragPoints[this.dragPoints.length - 1];
+        if (!last || last.x !== p.x || last.y !== p.y) {
+          this.dragPoints.push({ x: p.x, y: p.y });
+        }
+        this.finalizeDragTraceDebug(p.x, p.y, startX, startY);
+        this.dragActive = false;
+      }
       if (!hasSwipeStart) return;
       hasSwipeStart = false;
       const dx = p.x - startX;
@@ -111,6 +175,97 @@ export class GameScene extends Phaser.Scene {
     });
     this.input.on("gameout", () => {
       hasSwipeStart = false;
+      if (this.dragActive) {
+        this.dragActive = false;
+        this.dragTraceGraphics.clear();
+        this.dragPoints = [];
+      }
+    });
+  }
+
+  /** Same swipe direction detection as pointerup handler (for debug overlay). */
+  private detectSwipeDirection(
+    dx: number,
+    dy: number,
+    swipeThreshold: number
+  ): "up" | "down" | "left" | "right" | null {
+    const adx = Math.abs(dx);
+    const ady = Math.abs(dy);
+    if (adx > ady && adx >= swipeThreshold) {
+      return dx > 0 ? "right" : "left";
+    }
+    if (ady >= swipeThreshold) {
+      return dy > 0 ? "down" : "up";
+    }
+    return null;
+  }
+
+  private redrawDragTracePathOnly(): void {
+    const g = this.dragTraceGraphics;
+    g.clear();
+    if (this.dragPoints.length < 2) return;
+    g.lineStyle(3, 0x2563eb, 0.82);
+    g.beginPath();
+    g.moveTo(this.dragPoints[0].x, this.dragPoints[0].y);
+    for (let i = 1; i < this.dragPoints.length; i++) {
+      g.lineTo(this.dragPoints[i].x, this.dragPoints[i].y);
+    }
+    g.strokePath();
+  }
+
+  /**
+   * Shows stroke + end marker color: why the swipe did or did not act.
+   * Fades out over {@link DRAG_TRACE_FADE_MS}.
+   */
+  private finalizeDragTraceDebug(endX: number, endY: number, startX: number, startY: number): void {
+    const thresholdRaw = this.registry.get(REG_SWIPE_THRESHOLD);
+    const swipeThreshold = typeof thresholdRaw === "number" ? thresholdRaw : 40;
+    const dx = endX - startX;
+    const dy = endY - startY;
+    const dir = this.detectSwipeDirection(dx, dy, swipeThreshold);
+
+    const modalOpen = this.registry.get(REG_UI_MODAL_OPEN) as boolean;
+    const gameOver = this.registry.get(REG_GAMEOVER) as boolean;
+
+    let markerColor = 0x22c55e;
+    if (modalOpen) {
+      markerColor = 0x9ca3af;
+    } else if (gameOver) {
+      markerColor = 0xf97316;
+    } else if (!dir) {
+      markerColor = 0xef4444;
+    } else if (this.inputLocked && this.hardInputLock) {
+      markerColor = 0xa855f7;
+    } else if (this.inputLocked) {
+      markerColor = 0x06b6d4;
+    }
+
+    const g = this.dragTraceGraphics;
+    g.clear();
+    if (this.dragPoints.length >= 2) {
+      g.lineStyle(3, 0x2563eb, 0.82);
+      g.beginPath();
+      g.moveTo(this.dragPoints[0].x, this.dragPoints[0].y);
+      for (let i = 1; i < this.dragPoints.length; i++) {
+        g.lineTo(this.dragPoints[i].x, this.dragPoints[i].y);
+      }
+      g.strokePath();
+    }
+    g.fillStyle(markerColor, 0.95);
+    g.fillCircle(endX, endY, 5);
+
+    this.dragTraceFadeTween?.stop();
+    this.dragTraceFadeTween = this.tweens.add({
+      targets: this.dragTraceGraphics,
+      alpha: 0,
+      duration: DRAG_TRACE_FADE_MS,
+      ease: "Sine.easeOut",
+      onComplete: () => {
+        this.dragTraceGraphics.clear();
+        this.dragTraceGraphics.setAlpha(1);
+        this.dragTraceFadeTween = null;
+        this.dragPoints = [];
+      },
     });
   }
 
@@ -141,6 +296,29 @@ export class GameScene extends Phaser.Scene {
 
   private clearBufferedInput(): void {
     this.bufferedDirection = null;
+  }
+
+  private syncUndoAvailable(): void {
+    this.registry.set(REG_UNDO_AVAILABLE, this.lastUndoSnapshot !== null);
+  }
+
+  private performUndo(): void {
+    if (this.registry.get(REG_UI_MODAL_OPEN) as boolean) return;
+    if (this.inputLocked || this.hardInputLock) return;
+    const snap = this.lastUndoSnapshot;
+    if (!snap) return;
+
+    this.lastUndoSnapshot = null;
+    this.syncUndoAvailable();
+    this.bufferedDirection = null;
+
+    this.registry.set(REG_BOARD, snap.board);
+    this.registry.set(REG_SCORE, snap.score);
+    this.registry.set(REG_GAMEOVER, snap.gameOver);
+    this.registry.set(REG_HASWON, snap.hasWon);
+    this.registry.set(REG_WIN_EFFECT_DONE, snap.winEffectDone);
+    this.refreshBoard();
+    this.game.events.emit("stateChanged");
   }
 
   private playRainbowMergeFx(
@@ -372,6 +550,14 @@ export class GameScene extends Phaser.Scene {
     const board = this.registry.get(REG_BOARD) as Board;
     this.inputLocked = true;
 
+    const undoSnapshot: UndoSnapshot = {
+      board: copyBoard(board) as Board,
+      score: this.registry.get(REG_SCORE) as number,
+      gameOver: this.registry.get(REG_GAMEOVER) as boolean,
+      hasWon: this.registry.get(REG_HASWON) as boolean,
+      winEffectDone: this.registry.get(REG_WIN_EFFECT_DONE) as boolean,
+    };
+
     const emptyCount = getEmptyCount(board);
     const randomIndex =
       emptyCount > 0 ? Math.floor(Math.random() * emptyCount) : 0;
@@ -380,6 +566,10 @@ export class GameScene extends Phaser.Scene {
       this.releaseInputLock();
       return;
     }
+
+    // Single-step undo: keep only the state before this move.
+    this.lastUndoSnapshot = undoSnapshot;
+    this.syncUndoAvailable();
 
     this.registry.set(REG_BOARD, result.board);
     const score = (this.registry.get(REG_SCORE) as number) + result.scoreDelta;

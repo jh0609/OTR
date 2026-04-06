@@ -19,6 +19,7 @@ import {
   REG_UI_MODAL_OPEN,
   REG_QUICK_RESET_ENABLED,
   REG_SWIPE_THRESHOLD,
+  REG_UNDO_AVAILABLE,
 } from "../registry";
 import { setAnimationSpeedPercent, setTextBaseSize, setQuickResetEnabled, setSwipeThreshold } from "../storage";
 
@@ -56,6 +57,7 @@ export class UIScene extends Phaser.Scene {
   private swipeSliderY = 0;
   private swipeSliderW = 0;
   private swipeSliderH = 0;
+  private undoBtn!: Phaser.GameObjects.Text;
 
   constructor() {
     super({ key: SCENE_KEYS.UI });
@@ -101,6 +103,16 @@ export class UIScene extends Phaser.Scene {
     }).setOrigin(0, 0.5);
 
     const closeX = GAME_WIDTH - 16;
+    this.undoBtn = this.add.text(closeX - 150, HEADER_HEIGHT / 2, "Undo", {
+      fontSize: "13px",
+      color: "#111827",
+      fontStyle: "700",
+      backgroundColor: "#f2f4f7",
+    }).setOrigin(1, 0.5).setPadding(10, 6).setInteractive({ useHandCursor: true });
+    this.undoBtn.on("pointerdown", () => {
+      this.game.events.emit("requestUndo");
+    });
+
     const optionBtn = this.add.text(closeX - 72, HEADER_HEIGHT / 2, "Option", {
       fontSize: "13px",
       color: "#111827",
@@ -818,5 +830,10 @@ export class UIScene extends Phaser.Scene {
 
     this.winOverlay.setVisible(false);
     this.gameOverOverlay.setVisible(gameOver);
+
+    const canUndo = this.registry.get(REG_UNDO_AVAILABLE) === true;
+    if (this.undoBtn) {
+      this.undoBtn.setAlpha(canUndo ? 1 : 0.38);
+    }
   }
 }
