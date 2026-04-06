@@ -52,7 +52,7 @@ export function slideRowLeft(row: readonly Cell[]): SlideRowResult {
       );
       i += 2;
     } else if (a === 8 && b !== undefined && b === 8) {
-      // Rainbow + Rainbow: disappear from board and grant special fusion score.
+      // Rainbow + Rainbow: both tiles leave the board; fusion score only.
       const targetIndex = result.length;
       rainbowMergedIndices.push(targetIndex);
       score += getRainbowFusionScore();

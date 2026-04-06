@@ -35,15 +35,17 @@ describe("move", () => {
     expect(result.board[0]).toEqual([3, 2, 0]);
   });
 
-  it("[8,8,0] left stays [8,8,0]", () => {
+  it("[8,8,0] left: rainbow fusion clears row", () => {
     const board: Board = [
       [8, 8, 0],
       [0, 0, 0],
       [0, 0, 0],
     ];
     const result = applyMove(board, "left");
-    expect(result.board[0]).toEqual([8, 8, 0]);
-    expect(result.changed).toBe(false);
+    expect(result.board[0]).toEqual([0, 0, 0]);
+    expect(result.changed).toBe(true);
+    expect(result.scoreDelta).toBe(256);
+    expect(result.rainbowMerged.some((p) => p.row === 0 && p.col === 0)).toBe(true);
   });
 
   it("[1,0,1] left becomes [2,0,0]", () => {
@@ -70,15 +72,16 @@ describe("move", () => {
     expect(result.scoreDelta).toBe(2);
   });
 
-  it("[8,0,8] left stays [8,8,0]", () => {
+  it("[8,0,8] left: rainbow fusion clears row", () => {
     const board: Board = [
       [8, 0, 8],
       [0, 0, 0],
       [0, 0, 0],
     ];
     const result = applyMove(board, "left");
-    expect(result.board[0]).toEqual([8, 8, 0]);
-    expect(result.scoreDelta).toBe(0);
+    expect(result.board[0]).toEqual([0, 0, 0]);
+    expect(result.changed).toBe(true);
+    expect(result.scoreDelta).toBe(256);
   });
 
   it("right: [1,1,1] becomes [0,1,2]", () => {

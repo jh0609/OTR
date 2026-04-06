@@ -24,10 +24,11 @@ describe("merge", () => {
     expect(score).toBe(4); // merge to 3 => +4
   });
 
-  it("[8,8,0] left stays [8,8,0]", () => {
-    const { row, score } = slideRowLeft([8, 8, 0]);
-    expect(row).toEqual([8, 8, 0]);
-    expect(score).toBe(0);
+  it("[8,8,0] left: rainbow fusion — tiles disappear", () => {
+    const { row, score, rainbowMergedIndices } = slideRowLeft([8, 8, 0]);
+    expect(row).toEqual([0, 0, 0]);
+    expect(score).toBe(256);
+    expect(rainbowMergedIndices).toEqual([0]);
   });
 
   it("[1,0,1] left becomes [2,0,0]", () => {
@@ -42,10 +43,11 @@ describe("merge", () => {
     expect(score).toBe(2);
   });
 
-  it("[8,0,8] left stays [8,8,0]", () => {
-    const { row, score } = slideRowLeft([8, 0, 8]);
-    expect(row).toEqual([8, 8, 0]);
-    expect(score).toBe(0);
+  it("[8,0,8] left: rainbow fusion — tiles disappear", () => {
+    const { row, score, rainbowMergedIndices } = slideRowLeft([8, 0, 8]);
+    expect(row).toEqual([0, 0, 0]);
+    expect(score).toBe(256);
+    expect(rainbowMergedIndices).toEqual([0]);
   });
 
   it("[1,1,1,1] in 3-length row not used; 3-length [1,1,1] already tested", () => {
