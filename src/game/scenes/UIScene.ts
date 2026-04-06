@@ -102,17 +102,32 @@ export class UIScene extends Phaser.Scene {
     const g = this.add.graphics();
     g.fillStyle(parseInt(COLORS.headerBg.slice(1), 16), 1);
     g.fillRect(0, 0, GAME_WIDTH, HEADER_HEIGHT);
+    g.lineStyle(1, 0xe5e7eb, 1);
+    g.lineBetween(0, HEADER_HEIGHT - 0.5, GAME_WIDTH, HEADER_HEIGHT - 0.5);
 
-    const title = this.add.text(20, HEADER_HEIGHT / 2, GAME_TITLE, {
-      fontSize: "18px",
+    // Left: title (does not run into icon toolbar).
+    const headerPadX = 16;
+    const headerPadR = 14;
+    const iconSlot = 54;
+    const titleMaxWidth = GAME_WIDTH - headerPadX - headerPadR - iconSlot * 3 - 8;
+    const title = this.add.text(headerPadX, HEADER_HEIGHT / 2, GAME_TITLE, {
+      fontSize: "17px",
       color: "#0f172a",
       fontStyle: "700",
       stroke: "#ffffff",
       strokeThickness: 1,
+      wordWrap: { width: Math.max(120, titleMaxWidth) },
+      maxLines: 2,
+      align: "left",
     }).setOrigin(0, 0.5);
 
-    const closeX = GAME_WIDTH - 16;
-    this.undoBtn = this.add.text(closeX - 150, HEADER_HEIGHT / 2, "\u21b6", {
+    // Right: [ Undo ] [ Option ] [ Reset ] — fixed spacing from screen right.
+    const cy = HEADER_HEIGHT / 2;
+    const xReset = GAME_WIDTH - headerPadR;
+    const xOption = xReset - iconSlot;
+    const xUndo = xOption - iconSlot;
+
+    this.undoBtn = this.add.text(xUndo, cy, "↶", {
       fontSize: "20px",
       color: "#111827",
       fontStyle: "700",
@@ -122,7 +137,7 @@ export class UIScene extends Phaser.Scene {
       this.game.events.emit("requestUndo");
     });
 
-    const optionBtn = this.add.text(closeX - 78, HEADER_HEIGHT / 2, "\u2699", {
+    const optionBtn = this.add.text(xOption, cy, "⚙", {
       fontSize: "20px",
       color: "#111827",
       fontStyle: "700",
@@ -134,7 +149,7 @@ export class UIScene extends Phaser.Scene {
       this.optionsOverlay.setVisible(true);
     });
 
-    const closeBtn = this.add.text(closeX, HEADER_HEIGHT / 2, "↻", {
+    const closeBtn = this.add.text(xReset, cy, "↻", {
       fontSize: "20px",
       color: "#111827",
       fontStyle: "700",
@@ -453,7 +468,15 @@ export class UIScene extends Phaser.Scene {
       // Block click-through. Close via explicit close button.
     });
 
+    const persistOptionsSlidersToStorage = (): void => {
+      const anim = this.registry.get(REG_ANIM_SPEED_PERCENT);
+      if (typeof anim === "number") setAnimationSpeedPercent(anim);
+      const swipe = this.registry.get(REG_SWIPE_THRESHOLD);
+      if (typeof swipe === "number") setSwipeThreshold(swipe);
+    };
+
     const closeOptions = (): void => {
+      persistOptionsSlidersToStorage();
       this.registry.set(REG_UI_MODAL_OPEN, false);
       this.optionsOverlay.setVisible(false);
     };
@@ -589,7 +612,6 @@ export class UIScene extends Phaser.Scene {
       const ratio = Phaser.Math.Clamp((pointerX - sliderX) / sliderW, 0, 1);
       const next = Math.round(ratio * 200);
       this.registry.set(REG_ANIM_SPEED_PERCENT, next);
-      setAnimationSpeedPercent(next);
       this.syncAnimationSlider(next, sliderX, sliderY, sliderW, sliderH);
     };
 
@@ -600,12 +622,14 @@ export class UIScene extends Phaser.Scene {
       if (!p.isDown) return;
       setFromPosition(p.x);
     });
+    sliderHit.on("pointerup", persistOptionsSlidersToStorage);
 
     this.animSliderKnob.setInteractive({ useHandCursor: true, draggable: true });
     this.input.setDraggable(this.animSliderKnob);
     this.animSliderKnob.on("drag", (p: Phaser.Input.Pointer) => {
       setFromPosition(p.x);
     });
+    this.animSliderKnob.on("pointerup", persistOptionsSlidersToStorage);
 
     textMinusBtn.on("pointerdown", () => this.setTextBaseSizeStep(this.textBaseSize - 1));
     textPlusBtn.on("pointerdown", () => this.setTextBaseSizeStep(this.textBaseSize + 1));
@@ -614,17 +638,19 @@ export class UIScene extends Phaser.Scene {
       const ratio = Phaser.Math.Clamp((pointerX - swipeSliderX) / swipeSliderW, 0, 1);
       const next = Math.round(10 + ratio * (100 - 10));
       this.registry.set(REG_SWIPE_THRESHOLD, next);
-      setSwipeThreshold(next);
       this.syncSwipeSlider(next, swipeSliderX, swipeSliderY, swipeSliderW, swipeSliderH);
     };
+
     swipeHit.on("pointerdown", (p: Phaser.Input.Pointer) => setSwipeFromPosition(p.x));
     swipeHit.on("pointermove", (p: Phaser.Input.Pointer) => {
       if (!p.isDown) return;
       setSwipeFromPosition(p.x);
     });
+    swipeHit.on("pointerup", persistOptionsSlidersToStorage);
     this.swipeSliderKnob.setInteractive({ useHandCursor: true, draggable: true });
     this.input.setDraggable(this.swipeSliderKnob);
     this.swipeSliderKnob.on("drag", (p: Phaser.Input.Pointer) => setSwipeFromPosition(p.x));
+    this.swipeSliderKnob.on("pointerup", persistOptionsSlidersToStorage);
 
     this.inputTraceValueText.on("pointerdown", () => {
       this.setInputTraceState(!this.inputTraceEnabled, true);
