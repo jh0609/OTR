@@ -3,6 +3,8 @@ import type { Board } from "../core/types";
 import { SCENE_KEYS } from "../constants";
 import { GAME_WIDTH } from "../config";
 import { step as coreStep, isGameOver, hasWon, getEmptyCount } from "../core";
+import { getHint, experimentCEndgameWith78Tuning } from "../../sim";
+import { gameBoardToSim, simDirectionToGame } from "../hintBridge";
 import { copyBoard } from "../core/board";
 import { setBestScore } from "../storage";
 import { TILE_TEXTURE_BY_LEVEL } from "../assets";
@@ -105,8 +107,10 @@ export class GameScene extends Phaser.Scene {
     this.refreshBoard();
     this.setupInput();
     this.game.events.on("requestUndo", this.performUndo, this);
+    this.game.events.on("requestHint", this.performHint, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off("requestUndo", this.performUndo, this);
+      this.game.events.off("requestHint", this.performHint, this);
     });
   }
 
@@ -309,6 +313,23 @@ export class GameScene extends Phaser.Scene {
 
   private isDragTraceEnabled(): boolean {
     return this.registry.get(REG_SHOW_DRAG_TRACE) === true;
+  }
+
+  private performHint(): void {
+    if (this.registry.get(REG_UI_MODAL_OPEN) as boolean) return;
+    if (this.inputLocked || this.hardInputLock) return;
+    if (this.registry.get(REG_GAMEOVER) as boolean) return;
+
+    const board = this.registry.get(REG_BOARD) as Board;
+    if (isGameOver(board)) return;
+
+    const simBoard = gameBoardToSim(board);
+    const hint = getHint(simBoard, {
+      tuning: experimentCEndgameWith78Tuning,
+      depthLate: 8,
+      beamWidthLate: 10,
+    });
+    this.enqueueMove(simDirectionToGame(hint.bestDirection));
   }
 
   private performUndo(): void {

@@ -64,6 +64,7 @@ export class UIScene extends Phaser.Scene {
   private swipeSliderY = 0;
   private swipeSliderW = 0;
   private swipeSliderH = 0;
+  private hintBtn!: Phaser.GameObjects.Text;
   private undoBtn!: Phaser.GameObjects.Text;
   private inputTraceEnabled = false;
   private inputTraceValueText!: Phaser.GameObjects.Text;
@@ -109,7 +110,7 @@ export class UIScene extends Phaser.Scene {
     const headerPadX = 16;
     const headerPadR = 14;
     const iconSlot = 54;
-    const titleMaxWidth = GAME_WIDTH - headerPadX - headerPadR - iconSlot * 3 - 8;
+    const titleMaxWidth = GAME_WIDTH - headerPadX - headerPadR - iconSlot * 4 - 8;
     const title = this.add.text(headerPadX, HEADER_HEIGHT / 2, GAME_TITLE, {
       fontSize: "17px",
       color: "#0f172a",
@@ -126,6 +127,17 @@ export class UIScene extends Phaser.Scene {
     const xReset = GAME_WIDTH - headerPadR;
     const xOption = xReset - iconSlot;
     const xUndo = xOption - iconSlot;
+    const xHint = xUndo - iconSlot;
+
+    this.hintBtn = this.add.text(xHint, cy, "?", {
+      fontSize: "20px",
+      color: "#111827",
+      fontStyle: "700",
+      backgroundColor: "#f2f4f7",
+    }).setOrigin(1, 0.5).setPadding(12, 8).setInteractive({ useHandCursor: true });
+    this.hintBtn.on("pointerdown", () => {
+      this.game.events.emit("requestHint");
+    });
 
     this.undoBtn = this.add.text(xUndo, cy, "↶", {
       fontSize: "20px",
@@ -903,6 +915,9 @@ export class UIScene extends Phaser.Scene {
     const canUndo = this.registry.get(REG_UNDO_AVAILABLE) === true;
     if (this.undoBtn) {
       this.undoBtn.setAlpha(canUndo ? 1 : 0.38);
+    }
+    if (this.hintBtn) {
+      this.hintBtn.setAlpha(gameOver ? 0.38 : 1);
     }
   }
 }
