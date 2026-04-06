@@ -20,6 +20,7 @@ import {
   REG_QUICK_RESET_ENABLED,
   REG_SWIPE_THRESHOLD,
   REG_UNDO_AVAILABLE,
+  REG_HINT_BUSY,
   REG_SHOW_DRAG_TRACE,
 } from "../registry";
 import {
@@ -917,7 +918,12 @@ export class UIScene extends Phaser.Scene {
       this.undoBtn.setAlpha(canUndo ? 1 : 0.38);
     }
     if (this.hintBtn) {
-      this.hintBtn.setAlpha(gameOver ? 0.38 : 1);
+      const hintBusy = this.registry.get(REG_HINT_BUSY) === true;
+      const hintUsable = !gameOver && !hintBusy;
+      this.hintBtn.setAlpha(hintUsable ? 1 : 0.38);
+      if (this.hintBtn.input) {
+        this.hintBtn.input.enabled = hintUsable;
+      }
     }
   }
 }

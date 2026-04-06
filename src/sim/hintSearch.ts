@@ -33,6 +33,10 @@ export type HintSearchConfig = {
   tuning?: EndgameTuningConfig;
   /** true이면 `HintResult.debug` 채움 */
   includeDebug?: boolean;
+  /**
+   * 호출 간 유지할 값 캐시 (`depth:board` 키). 동일 튜닝·깊이·빔 설정으로 연속 호출 시 재사용하면 탐색이 가속됨.
+   */
+  valueCache?: Map<string, number>;
 };
 
 export type HintDebug = {
@@ -77,7 +81,7 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
   const searchedDepth = isLate ? (config?.depthLate ?? 10) : (config?.depthEarly ?? 4);
   const beamWidth = isLate ? (config?.beamWidthLate ?? 12) : (config?.beamWidthEarly ?? 6);
 
-  const cache = new Map<string, number>();
+  const cache = config?.valueCache ?? new Map<string, number>();
   let expandedNodes = 0;
   let cacheHits = 0;
 

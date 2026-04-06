@@ -20,4 +20,21 @@ describe("getHint", () => {
     expect(h.debug).toBeDefined();
     expect(h.debug!.expandedNodes).toBeGreaterThanOrEqual(0);
   });
+
+  it("reuses valueCache across calls on the same board", () => {
+    const b = boardFrom([2, 2, 0, 0, 0, 0, 0, 0, 0]);
+    const cache = new Map<string, number>();
+    const opts = {
+      depthEarly: 3,
+      beamWidthEarly: 6,
+      depthLate: 3,
+      beamWidthLate: 6,
+      valueCache: cache,
+      includeDebug: true as const,
+    };
+    const h1 = getHint(b, opts);
+    const h2 = getHint(b, opts);
+    expect(h2.bestDirection).toBe(h1.bestDirection);
+    expect(h2.debug!.cacheHits).toBeGreaterThan(h1.debug!.cacheHits);
+  });
 });

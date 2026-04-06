@@ -3,7 +3,12 @@ import type { Board } from "../core/types";
 import { SCENE_KEYS } from "../constants";
 import { GAME_WIDTH } from "../config";
 import { step as coreStep, isGameOver, hasWon, getEmptyCount } from "../core";
-import { getHint, experimentCEndgameWith78Tuning } from "../../sim";
+import {
+  getHint,
+  experimentCEndgameWith78Tuning,
+  type HintSearchConfig,
+  type HintResult,
+} from "../../sim";
 import { gameBoardToSim, simDirectionToGame } from "../hintBridge";
 import { copyBoard } from "../core/board";
 import { setBestScore } from "../storage";
@@ -29,6 +34,7 @@ import {
   REG_SWIPE_THRESHOLD,
   REG_WIN_EFFECT_DONE,
   REG_UNDO_AVAILABLE,
+  REG_HINT_BUSY,
   REG_SHOW_DRAG_TRACE,
 } from "../registry";
 
@@ -75,6 +81,11 @@ export class GameScene extends Phaser.Scene {
   private dragActive = false;
   /** Only the state before the last successful move can be restored. */
   private lastUndoSnapshot: UndoSnapshot | null = null;
+  /** 직전 힌트가 계산된 보드 키(`sim` 1차원 join) — 동일 보드에서 연속 탭 시 재계산 생략. */
+  private hintLastBoardKey: string | null = null;
+  private hintLastResult: HintResult | null = null;
+  /** `getHint` 서브트리 값 캐시 — 플레이 세션 동안 누적해 연속 힌트 탐색 가속. */
+  private readonly hintValueCache = new Map<string, number>();
 
   constructor() {
     super({ key: SCENE_KEYS.GAME });
@@ -104,6 +115,10 @@ export class GameScene extends Phaser.Scene {
     this.dragTraceGraphics = this.add.graphics();
     this.dragTraceGraphics.setDepth(25);
     this.registry.set(REG_UNDO_AVAILABLE, false);
+    this.registry.set(REG_HINT_BUSY, false);
+    this.hintLastBoardKey = null;
+    this.hintLastResult = null;
+    this.hintValueCache.clear();
     this.refreshBoard();
     this.setupInput();
     this.game.events.on("requestUndo", this.performUndo, this);
@@ -315,6 +330,17 @@ export class GameScene extends Phaser.Scene {
     return this.registry.get(REG_SHOW_DRAG_TRACE) === true;
   }
 
+  private hintSearchOptions(): HintSearchConfig {
+    return {
+      tuning: experimentCEndgameWith78Tuning,
+      depthEarly: 5,
+      beamWidthEarly: 8,
+      depthLate: 12,
+      beamWidthLate: 14,
+      valueCache: this.hintValueCache,
+    };
+  }
+
   private performHint(): void {
     if (this.registry.get(REG_UI_MODAL_OPEN) as boolean) return;
     if (this.inputLocked || this.hardInputLock) return;
@@ -324,12 +350,28 @@ export class GameScene extends Phaser.Scene {
     if (isGameOver(board)) return;
 
     const simBoard = gameBoardToSim(board);
-    const hint = getHint(simBoard, {
-      tuning: experimentCEndgameWith78Tuning,
-      depthLate: 8,
-      beamWidthLate: 10,
-    });
-    this.enqueueMove(simDirectionToGame(hint.bestDirection));
+    const boardKey = simBoard.join(",");
+
+    if (this.hintLastBoardKey === boardKey && this.hintLastResult) {
+      this.enqueueMove(simDirectionToGame(this.hintLastResult.bestDirection));
+      return;
+    }
+
+    if (this.hintValueCache.size > 200_000) {
+      this.hintValueCache.clear();
+    }
+
+    this.registry.set(REG_HINT_BUSY, true);
+    this.game.events.emit("stateChanged");
+    try {
+      const hint = getHint(simBoard, this.hintSearchOptions());
+      this.hintLastBoardKey = boardKey;
+      this.hintLastResult = hint;
+      this.enqueueMove(simDirectionToGame(hint.bestDirection));
+    } finally {
+      this.registry.set(REG_HINT_BUSY, false);
+      this.game.events.emit("stateChanged");
+    }
   }
 
   private performUndo(): void {
