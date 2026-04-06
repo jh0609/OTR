@@ -93,6 +93,12 @@ function printStructureSummaryBlock(
   line("ever two 7s", (s) => `${s.episodesEverTwoSevens} (${pct(s.episodesEverTwoSevens, totalEpisodes)}%)`);
   line("ever one 8 + one 7", (s) => `${s.episodesEverOne8AndOne7} (${pct(s.episodesEverOne8AndOne7, totalEpisodes)}%)`);
   line("ever two 8s", (s) => `${s.episodesEverTwo8s} (${pct(s.episodesEverTwo8s, totalEpisodes)}%)`);
+  line("ever adjacent 7+7", (s) => `${s.episodesEverAdjacent77} (${pct(s.episodesEverAdjacent77, totalEpisodes)}%)`);
+  line("ever adjacent 8+7", (s) => `${s.episodesEverAdjacent87} (${pct(s.episodesEverAdjacent87, totalEpisodes)}%)`);
+  line("ever adjacent 8+8", (s) => `${s.episodesEverAdjacent88} (${pct(s.episodesEverAdjacent88, totalEpisodes)}%)`);
+  line("final adjacent 7+7", (s) => `${s.episodesFinalAdjacent77} (${pct(s.episodesFinalAdjacent77, totalEpisodes)}%)`);
+  line("final adjacent 8+7", (s) => `${s.episodesFinalAdjacent87} (${pct(s.episodesFinalAdjacent87, totalEpisodes)}%)`);
+  line("final adjacent 8+8", (s) => `${s.episodesFinalAdjacent88} (${pct(s.episodesFinalAdjacent88, totalEpisodes)}%)`);
   line("ever max8+second6", (s) => `${s.episodesEverMax8Second6} (${pct(s.episodesEverMax8Second6, totalEpisodes)}%)`);
   line("ever max8+second7", (s) => `${s.episodesEverMax8Second7} (${pct(s.episodesEverMax8Second7, totalEpisodes)}%)`);
   line("mp7>0 while max≥8 (episodes)", (s) => `${s.episodesEverMp7PositiveWhileMaxGte8} (${pct(s.episodesEverMp7PositiveWhileMaxGte8, totalEpisodes)}%)`);
@@ -132,7 +138,25 @@ function printMonteCarloStats(stats: MonteCarloStats, totalEpisodes: number): vo
     `    ever two 8s (simultaneous): ${stats.episodesEverTwo8s} (${pct(stats.episodesEverTwo8s, totalEpisodes)}%)`
   );
   console.log(
+    `    ever adjacent 7+7: ${stats.episodesEverAdjacent77} (${pct(stats.episodesEverAdjacent77, totalEpisodes)}%)`
+  );
+  console.log(
+    `    ever adjacent 8+7: ${stats.episodesEverAdjacent87} (${pct(stats.episodesEverAdjacent87, totalEpisodes)}%)`
+  );
+  console.log(
+    `    ever adjacent 8+8: ${stats.episodesEverAdjacent88} (${pct(stats.episodesEverAdjacent88, totalEpisodes)}%)`
+  );
+  console.log(
     `    final board one8+one7: ${stats.episodesFinalOne8AndOne7} (${pct(stats.episodesFinalOne8AndOne7, totalEpisodes)}%)`
+  );
+  console.log(
+    `    final adjacent 7+7: ${stats.episodesFinalAdjacent77} (${pct(stats.episodesFinalAdjacent77, totalEpisodes)}%)`
+  );
+  console.log(
+    `    final adjacent 8+7: ${stats.episodesFinalAdjacent87} (${pct(stats.episodesFinalAdjacent87, totalEpisodes)}%)`
+  );
+  console.log(
+    `    final adjacent 8+8: ${stats.episodesFinalAdjacent88} (${pct(stats.episodesFinalAdjacent88, totalEpisodes)}%)`
   );
   console.log(
     `    ever max8+second6 snapshot: ${stats.episodesEverMax8Second6} (${pct(stats.episodesEverMax8Second6, totalEpisodes)}%)`

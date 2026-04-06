@@ -81,10 +81,8 @@ export class GameScene extends Phaser.Scene {
   private dragActive = false;
   /** Only the state before the last successful move can be restored. */
   private lastUndoSnapshot: UndoSnapshot | null = null;
-  /** 직전 힌트가 계산된 보드 키(`sim` 1차원 join) — 동일 보드에서 연속 탭 시 재계산 생략. */
   private hintLastBoardKey: string | null = null;
   private hintLastResult: HintResult | null = null;
-  /** `getHint` 서브트리 값 캐시 — 플레이 세션 동안 누적해 연속 힌트 탐색 가속. */
   private readonly hintValueCache = new Map<string, number>();
 
   constructor() {

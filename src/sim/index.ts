@@ -126,6 +126,11 @@ export {
   mergePotentialAtLevel,
   endgame7To8Potential,
   ultraLateSlidePreference,
+  areAdjacent,
+  hasAdjacentPair,
+  hasAdjacentCrossPair,
+  highLevelAdjacencyState,
+  type HighLevelAdjState,
 } from "./boardStats";
 
 export { simulateOne, runMonteCarlo, emptyBoard, boardFrom } from "./simulate";

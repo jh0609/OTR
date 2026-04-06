@@ -67,6 +67,16 @@ export type EpisodeResult = {
   readonly everHadMax8Second7WithMp7Positive: boolean;
   /** 한 번이라도 max8+second7 이고 mp7==0 */
   readonly everHadMax8Second7WithMp7Zero: boolean;
+
+  /** 한 턴이라도 인접한 7+7 (merge 직전) */
+  readonly everHadAdjacent77: boolean;
+  /** 한 턴이라도 인접한 8+7 */
+  readonly everHadAdjacent87: boolean;
+  /** 한 턴이라도 인접한 8+8 */
+  readonly everHadAdjacent88: boolean;
+  readonly finalHasAdjacent77: boolean;
+  readonly finalHasAdjacent87: boolean;
+  readonly finalHasAdjacent88: boolean;
 };
 
 export type MonteCarloStats = {
@@ -104,4 +114,11 @@ export type MonteCarloStats = {
   readonly episodesEverMax8Second7Mp7Zero: number;
   readonly meanPeakMergePotential7: number;
   readonly meanFinalMergePotential7: number;
+
+  readonly episodesEverAdjacent77: number;
+  readonly episodesEverAdjacent87: number;
+  readonly episodesEverAdjacent88: number;
+  readonly episodesFinalAdjacent77: number;
+  readonly episodesFinalAdjacent87: number;
+  readonly episodesFinalAdjacent88: number;
 };

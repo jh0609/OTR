@@ -35,6 +35,7 @@ describe("getHint", () => {
     const h1 = getHint(b, opts);
     const h2 = getHint(b, opts);
     expect(h2.bestDirection).toBe(h1.bestDirection);
-    expect(h2.debug!.cacheHits).toBeGreaterThan(h1.debug!.cacheHits);
+    expect(cache.size).toBeGreaterThan(0);
+    expect(h2.debug!.expandedNodes).toBeLessThan(h1.debug!.expandedNodes);
   });
 });

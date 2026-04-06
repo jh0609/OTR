@@ -13,6 +13,7 @@ import { maxTileLevel } from "./board";
 import { slide } from "./slide";
 import { spawnAll } from "./spawn";
 import { legalActions } from "./legal";
+import { isTerminal } from "./terminal";
 import { scoreBoardV3 } from "./scoringV3";
 import {
   lateGameSlidePenalty,
@@ -23,6 +24,9 @@ import type { EndgameTuning, EndgameTuningConfig } from "./endgameTuning";
 import { mergeEndgameTuning } from "./endgameTuning";
 
 const ORDER_TIE: Direction[] = ["DOWN", "UP", "LEFT", "RIGHT"];
+
+/** 합법 수가 없는 국면 — 휴리스틱 대신 고정 패널티(기대값에서 회피되도록 충분히 작게). */
+const TERMINAL_LOSS = -1e9;
 
 export type HintSearchConfig = {
   lateThreshold?: number;
@@ -103,13 +107,13 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
   }
 
   function searchInner(b: Board, d: number): number {
+    if (isTerminal(b, "standard")) {
+      return TERMINAL_LOSS;
+    }
     if (d <= 0) {
       return scoreBoardV3(b, t);
     }
     const acts = legalActions(b);
-    if (acts.length === 0) {
-      return scoreBoardV3(b, t);
-    }
     let best = -Infinity;
     for (const dir of ORDER_TIE) {
       if (!acts.includes(dir)) continue;
@@ -128,10 +132,15 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
     }
     const outs = spawnAll(next);
     if (d <= 0) {
-      if (outs.length === 0) return pen + scoreBoardV3(next, t);
+      if (outs.length === 0) {
+        const v = isTerminal(next, "standard") ? TERMINAL_LOSS : scoreBoardV3(next, t);
+        return pen + v;
+      }
       const pruned0 = pruneSpawnOutcomes(outs, beamWidth, t);
       let sum0 = 0;
-      for (const s of pruned0) sum0 += scoreBoardV3(s, t);
+      for (const s of pruned0) {
+        sum0 += isTerminal(s, "standard") ? TERMINAL_LOSS : scoreBoardV3(s, t);
+      }
       return pen + sum0 / pruned0.length;
     }
     if (outs.length === 0) {

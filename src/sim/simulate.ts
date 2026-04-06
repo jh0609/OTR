@@ -12,6 +12,8 @@ import {
   hasTwoOrMoreTilesEqual,
   hasMax8AndSecond6,
   hasMax8AndSecond7,
+  hasAdjacentCrossPair,
+  hasAdjacentPair,
   mergePotentialAtLevel,
 } from "./boardStats";
 import { slide } from "./slide";
@@ -39,6 +41,9 @@ type MutableEpisodeStats = {
   everMp7PosGte8: boolean;
   everM8S7Mp7Pos: boolean;
   everM8S7Mp7Zero: boolean;
+  everAdjacent77: boolean;
+  everAdjacent87: boolean;
+  everAdjacent88: boolean;
 };
 
 function makeStats(): MutableEpisodeStats {
@@ -60,6 +65,9 @@ function makeStats(): MutableEpisodeStats {
     everMp7PosGte8: false,
     everM8S7Mp7Pos: false,
     everM8S7Mp7Zero: false,
+    everAdjacent77: false,
+    everAdjacent87: false,
+    everAdjacent88: false,
   };
 }
 
@@ -93,6 +101,11 @@ function observeBoard(board: Board, s: MutableEpisodeStats): void {
     if (mp7 > 0) s.everM8S7Mp7Pos = true;
     else s.everM8S7Mp7Zero = true;
   }
+
+  const c7 = countTilesEqual(board, 7);
+  if (c7 >= 2 && hasAdjacentPair(board, 7)) s.everAdjacent77 = true;
+  if (c8 >= 1 && c7 >= 1 && hasAdjacentCrossPair(board, 8, 7)) s.everAdjacent87 = true;
+  if (c8 >= 2 && hasAdjacentPair(board, 8)) s.everAdjacent88 = true;
 }
 
 function finalize(
@@ -102,6 +115,8 @@ function finalize(
   s: MutableEpisodeStats,
   terminalBoard: Board
 ): EpisodeResult {
+  const c7f = countTilesEqual(terminalBoard, 7);
+  const c8f = countTilesEqual(terminalBoard, 8);
   return {
     win,
     steps,
@@ -130,6 +145,14 @@ function finalize(
     everHadMp7PositiveWhileMaxGte8: s.everMp7PosGte8,
     everHadMax8Second7WithMp7Positive: s.everM8S7Mp7Pos,
     everHadMax8Second7WithMp7Zero: s.everM8S7Mp7Zero,
+
+    everHadAdjacent77: s.everAdjacent77,
+    everHadAdjacent87: s.everAdjacent87,
+    everHadAdjacent88: s.everAdjacent88,
+    finalHasAdjacent77: c7f >= 2 && hasAdjacentPair(terminalBoard, 7),
+    finalHasAdjacent87:
+      c8f >= 1 && c7f >= 1 && hasAdjacentCrossPair(terminalBoard, 8, 7),
+    finalHasAdjacent88: c8f >= 2 && hasAdjacentPair(terminalBoard, 8),
   };
 }
 
@@ -232,6 +255,12 @@ export function runMonteCarlo(
   let episodesEverMax8Second7Mp7Zero = 0;
   let sumPeakMp7 = 0;
   let sumFinalMp7 = 0;
+  let episodesEverAdjacent77 = 0;
+  let episodesEverAdjacent87 = 0;
+  let episodesEverAdjacent88 = 0;
+  let episodesFinalAdjacent77 = 0;
+  let episodesFinalAdjacent87 = 0;
+  let episodesFinalAdjacent88 = 0;
   const terminalReasons = emptyTerminalReasons();
 
   for (let i = 0; i < n; i++) {
@@ -265,6 +294,12 @@ export function runMonteCarlo(
     if (r.everHadMax8Second7WithMp7Zero) episodesEverMax8Second7Mp7Zero++;
     sumPeakMp7 += r.peakMergePotential7;
     sumFinalMp7 += r.finalMergePotential7;
+    if (r.everHadAdjacent77) episodesEverAdjacent77++;
+    if (r.everHadAdjacent87) episodesEverAdjacent87++;
+    if (r.everHadAdjacent88) episodesEverAdjacent88++;
+    if (r.finalHasAdjacent77) episodesFinalAdjacent77++;
+    if (r.finalHasAdjacent87) episodesFinalAdjacent87++;
+    if (r.finalHasAdjacent88) episodesFinalAdjacent88++;
     terminalReasons[r.terminalReason]++;
   }
 
@@ -297,6 +332,12 @@ export function runMonteCarlo(
     episodesEverMax8Second7Mp7Zero,
     meanPeakMergePotential7: n > 0 ? sumPeakMp7 / n : 0,
     meanFinalMergePotential7: n > 0 ? sumFinalMp7 / n : 0,
+    episodesEverAdjacent77,
+    episodesEverAdjacent87,
+    episodesEverAdjacent88,
+    episodesFinalAdjacent77,
+    episodesFinalAdjacent87,
+    episodesFinalAdjacent88,
   };
 }
 

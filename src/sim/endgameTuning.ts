@@ -49,6 +49,14 @@ export type EndgameTuningConfig = {
   deltaMergePotential7Weight?: number;
   deltaRebuildPreferenceWeight?: number;
   deltaTrappedPenaltyWeight?: number;
+
+  /** Phase3: 조건 충족인데 해당 레벨 쌍이 인접하지 않을 때 (이진 패널티). */
+  penalty88NotAdjacent?: number;
+  penalty87NotAdjacent?: number;
+  penalty77NotAdjacent?: number;
+  /** maxTile≥7 슬라이드 직후: 인접 준비 없음→생김 / 생김→없음 에 가산·감산 */
+  deltaHighLevelAdjacencyGain?: number;
+  deltaHighLevelAdjacencyLoss?: number;
 };
 
 export type EndgameTuning = Required<EndgameTuningConfig>;
@@ -89,6 +97,12 @@ const BASE: EndgameTuning = {
   deltaMergePotential7Weight: 0,
   deltaRebuildPreferenceWeight: 0,
   deltaTrappedPenaltyWeight: 0,
+
+  penalty88NotAdjacent: 1200,
+  penalty87NotAdjacent: 700,
+  penalty77NotAdjacent: 400,
+  deltaHighLevelAdjacencyGain: 400,
+  deltaHighLevelAdjacencyLoss: 500,
 };
 
 export function mergeEndgameTuning(partial?: EndgameTuningConfig | null): EndgameTuning {

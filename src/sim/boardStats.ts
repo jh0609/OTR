@@ -68,6 +68,67 @@ export function hasSimultaneousTwo8s(board: Board): boolean {
   return countTilesEqual(board, 8) >= 2;
 }
 
+/** 3×3 격자에서 인덱스 i, j가 상하좌우로 인접하면 true (동일 칸은 false). */
+export function areAdjacent(i: number, j: number): boolean {
+  if (i === j) return false;
+  if (i < 0 || i >= LEN || j < 0 || j >= LEN) return false;
+  const ri = Math.floor(i / 3);
+  const ci = i % 3;
+  const rj = Math.floor(j / 3);
+  const cj = j % 3;
+  return Math.abs(ri - rj) + Math.abs(ci - cj) === 1;
+}
+
+/** 인접한 동일 레벨 타일 쌍이 하나라도 있으면 true (가로·세로 이웃만). */
+export function hasAdjacentPair(board: Board, level: number): boolean {
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      const i = r * 3 + c;
+      if (board[i] !== level) continue;
+      if (c < 2 && board[i + 1] === level) return true;
+      if (r < 2 && board[i + 3] === level) return true;
+    }
+  }
+  return false;
+}
+
+/** 인접한 levelA / levelB 쌍 (순서 무관)이 하나라도 있으면 true. */
+export function hasAdjacentCrossPair(board: Board, levelA: number, levelB: number): boolean {
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      const i = r * 3 + c;
+      const v = board[i];
+      if (v === 0) continue;
+      if (c < 2) {
+        const j = i + 1;
+        const w = board[j];
+        if ((v === levelA && w === levelB) || (v === levelB && w === levelA)) return true;
+      }
+      if (r < 2) {
+        const j = i + 3;
+        const w = board[j];
+        if ((v === levelA && w === levelB) || (v === levelB && w === levelA)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+export type HighLevelAdjState = "88" | "87" | "77" | "none";
+
+/**
+ * 인접한 고레벨 merge 준비 상태(우선순위: 8+8 → 8+7 → 7+7).
+ * 해당 인벤토리가 없으면 'none'.
+ */
+export function highLevelAdjacencyState(board: Board): HighLevelAdjState {
+  const c7 = countTilesEqual(board, 7);
+  const c8 = countTilesEqual(board, 8);
+  if (c8 >= 2 && hasAdjacentPair(board, 8)) return "88";
+  if (c8 >= 1 && c7 >= 1 && hasAdjacentCrossPair(board, 8, 7)) return "87";
+  if (c7 >= 2 && hasAdjacentPair(board, 7)) return "77";
+  return "none";
+}
+
 function neighbors4(idx: number): number[] {
   const r = Math.floor(idx / 3);
   const c = idx % 3;
@@ -344,6 +405,13 @@ export function lateGameSlidePenalty(
   const ra = rebuildLaneScore(after);
   if (ra < rb - t.rebuildDropDelta) p -= t.rebuildDropPenalty;
   p += ultraLateSlidePreference(before, after, t);
+
+  if (maxTileLevel(before) >= 7 && maxTileLevel(after) < 9) {
+    const okB = highLevelAdjacencyState(before) !== "none";
+    const okA = highLevelAdjacencyState(after) !== "none";
+    if (!okB && okA) p += t.deltaHighLevelAdjacencyGain;
+    if (okB && !okA) p -= t.deltaHighLevelAdjacencyLoss;
+  }
   return p;
 }
 

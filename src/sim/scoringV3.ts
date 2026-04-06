@@ -9,6 +9,8 @@ import {
 import {
   countTilesAtLeast,
   countTilesEqual,
+  hasAdjacentCrossPair,
+  hasAdjacentPair,
   rebuildLaneScore,
   secondMaxTile,
   trappedAroundMaxTile,
@@ -111,6 +113,14 @@ function scorePhase3(board: Board, t: EndgameTuning): number {
   if (count7 >= 2) score += t.two7Bonus;
   if (count8 >= 1 && count7 >= 1) score += t.one8one7Bonus;
   if (count8 >= 2) score += t.two8Bonus;
+
+  if (count8 >= 2 && !hasAdjacentPair(board, 8)) {
+    score -= t.penalty88NotAdjacent;
+  } else if (count8 >= 1 && count7 >= 1 && !hasAdjacentCrossPair(board, 8, 7)) {
+    score -= t.penalty87NotAdjacent;
+  } else if (count7 >= 2 && !hasAdjacentPair(board, 7)) {
+    score -= t.penalty77NotAdjacent;
+  }
 
   const ultraEndgame =
     (mx >= 8 && sm >= 7) || (count7 >= 2 && mx >= 7);
