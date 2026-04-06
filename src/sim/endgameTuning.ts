@@ -57,6 +57,18 @@ export type EndgameTuningConfig = {
   /** maxTile≥7 슬라이드 직후: 인접 준비 없음→생김 / 생김→없음 에 가산·감산 */
   deltaHighLevelAdjacencyGain?: number;
   deltaHighLevelAdjacencyLoss?: number;
+
+  /** Phase3: 한 수로 7→8 / 8→9 머지 가능할 때 보너스 */
+  mergeNow7Bonus?: number;
+  mergeNow8Bonus?: number;
+  /** count≥2 인데 즉시 머지 불가일 때 (미루기) */
+  deferMerge7Penalty?: number;
+  deferMerge8Penalty?: number;
+  /** 슬라이드로 즉시 머지 가능 상태가 열리거나 닫힐 때 Q 델타 */
+  deltaImmediateMerge7Gain?: number;
+  deltaImmediateMerge7Loss?: number;
+  deltaImmediateMerge8Gain?: number;
+  deltaImmediateMerge8Loss?: number;
 };
 
 export type EndgameTuning = Required<EndgameTuningConfig>;
@@ -103,6 +115,15 @@ const BASE: EndgameTuning = {
   penalty77NotAdjacent: 400,
   deltaHighLevelAdjacencyGain: 400,
   deltaHighLevelAdjacencyLoss: 500,
+
+  mergeNow7Bonus: 0,
+  mergeNow8Bonus: 0,
+  deferMerge7Penalty: 0,
+  deferMerge8Penalty: 0,
+  deltaImmediateMerge7Gain: 0,
+  deltaImmediateMerge7Loss: 0,
+  deltaImmediateMerge8Gain: 0,
+  deltaImmediateMerge8Loss: 0,
 };
 
 export function mergeEndgameTuning(partial?: EndgameTuningConfig | null): EndgameTuning {
@@ -156,4 +177,29 @@ export const experimentCEndgameWith78Tuning: EndgameTuning = mergeEndgameTuning(
   deltaMergePotential7Weight: 600,
   deltaRebuildPreferenceWeight: 120,
   deltaTrappedPenaltyWeight: 100,
+});
+
+/** C+78 + merge timing(즉시 머지 보너스·미루기 패널티·슬라이드 Q 델타) */
+export const experimentCEndgameWith78MergeTiming: EndgameTuning = mergeEndgameTuning({
+  rebuildWeight: 180,
+  rebuildDropPenalty: 250,
+  emptyZeroPenalty: 600,
+  trappedWeight: 100,
+  endgame78Weight: 220,
+  max8Second7Bonus: 4000,
+  two7EndgameBonus: 2500,
+  active7MergeBonus: 1200,
+  mergePotential7Weight: 500,
+  mergePotential6Weight: 160,
+  deltaMergePotential7Weight: 600,
+  deltaRebuildPreferenceWeight: 120,
+  deltaTrappedPenaltyWeight: 100,
+  mergeNow7Bonus: 2500,
+  mergeNow8Bonus: 12000,
+  deferMerge7Penalty: 300,
+  deferMerge8Penalty: 1200,
+  deltaImmediateMerge7Gain: 1200,
+  deltaImmediateMerge7Loss: 1500,
+  deltaImmediateMerge8Gain: 5000,
+  deltaImmediateMerge8Loss: 7000,
 });

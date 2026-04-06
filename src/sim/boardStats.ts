@@ -1,4 +1,4 @@
-import type { Board } from "./types";
+import type { Board, Direction } from "./types";
 import { emptyCount, LEN, maxTileLevel } from "./board";
 import type { EndgameTuning, EndgameTuningConfig } from "./endgameTuning";
 import { mergeEndgameTuning } from "./endgameTuning";
@@ -127,6 +127,104 @@ export function highLevelAdjacencyState(board: Board): HighLevelAdjState {
   if (c8 >= 1 && c7 >= 1 && hasAdjacentCrossPair(board, 8, 7)) return "87";
   if (c7 >= 2 && hasAdjacentPair(board, 7)) return "77";
   return "none";
+}
+
+const SLIDE_DIRS: Direction[] = ["UP", "DOWN", "LEFT", "RIGHT"];
+
+function nonzeroOrdered(board: Board, i0: number, i1: number, i2: number): number[] {
+  const nz: number[] = [];
+  for (const i of [i0, i1, i2]) {
+    const v = board[i]!;
+    if (v !== 0) nz.push(v);
+  }
+  return nz;
+}
+
+/** slideLineLeft와 동일: 압축된 한 줄에서 level+level→level+1 머지 횟수. */
+function countMergesAtLevelInCompressedLine(nz: number[], level: number): number {
+  let cnt = 0;
+  let i = 0;
+  while (i < nz.length) {
+    const a = nz[i]!;
+    const b = nz[i + 1];
+    if (b !== undefined && a === b && a === level) {
+      cnt++;
+      i += 2;
+    } else {
+      i += 1;
+    }
+  }
+  return cnt;
+}
+
+/** 한 방향 슬라이드 시 해당 레벨 타일끼리의 머지가 일어나는 횟수(라인별 합). `slide.ts`와 동일한 줄 순서. */
+export function countMergesAtLevelInSlide(board: Board, dir: Direction, level: number): number {
+  let total = 0;
+  if (dir === "LEFT") {
+    for (let r = 0; r < 3; r++) {
+      const nz = nonzeroOrdered(board, r * 3, r * 3 + 1, r * 3 + 2);
+      total += countMergesAtLevelInCompressedLine(nz, level);
+    }
+  } else if (dir === "RIGHT") {
+    for (let r = 0; r < 3; r++) {
+      const nz = nonzeroOrdered(board, r * 3 + 2, r * 3 + 1, r * 3);
+      total += countMergesAtLevelInCompressedLine(nz, level);
+    }
+  } else if (dir === "UP") {
+    for (let c = 0; c < 3; c++) {
+      const nz = nonzeroOrdered(board, c, c + 3, c + 6);
+      total += countMergesAtLevelInCompressedLine(nz, level);
+    }
+  } else {
+    for (let c = 0; c < 3; c++) {
+      const nz = nonzeroOrdered(board, c + 6, c + 3, c);
+      total += countMergesAtLevelInCompressedLine(nz, level);
+    }
+  }
+  return total;
+}
+
+/** 한 번의 이동으로 해당 레벨 머지가 가능한 방향이 하나라도 있으면 true. */
+export function hasImmediateMerge(board: Board, level: number): boolean {
+  for (const dir of SLIDE_DIRS) {
+    if (countMergesAtLevelInSlide(board, dir, level) > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * 네 방향 중 “한 번의 슬라이드로 만들 수 있는” 해당 레벨 머지 횟수의 최댓값.
+ * (실제로는 한 방향만 고를 수 있으므로 상한 지표로 사용.)
+ */
+export function immediateMergeCount(board: Board, level: number): number {
+  let m = 0;
+  for (const dir of SLIDE_DIRS) {
+    const c = countMergesAtLevelInSlide(board, dir, level);
+    if (c > m) m = c;
+  }
+  return m;
+}
+
+/**
+ * 슬라이드 직후 보드에서 즉시 7/8 머지 가능 여부가 열리거나 닫힐 때 Q에 가산 (후반).
+ */
+export function mergeTimingSlideDelta(
+  before: Board,
+  after: Board,
+  tuning?: EndgameTuningConfig | null
+): number {
+  const t = mergeEndgameTuning(tuning);
+  if (maxTileLevel(before) < 7 || maxTileLevel(after) >= 9) return 0;
+  const b7 = hasImmediateMerge(before, 7);
+  const a7 = hasImmediateMerge(after, 7);
+  const b8 = hasImmediateMerge(before, 8);
+  const a8 = hasImmediateMerge(after, 8);
+  let p = 0;
+  if (!b7 && a7) p += t.deltaImmediateMerge7Gain;
+  if (b7 && !a7) p -= t.deltaImmediateMerge7Loss;
+  if (!b8 && a8) p += t.deltaImmediateMerge8Gain;
+  if (b8 && !a8) p -= t.deltaImmediateMerge8Loss;
+  return p;
 }
 
 function neighbors4(idx: number): number[] {
@@ -411,6 +509,7 @@ export function lateGameSlidePenalty(
     const okA = highLevelAdjacencyState(after) !== "none";
     if (!okB && okA) p += t.deltaHighLevelAdjacencyGain;
     if (okB && !okA) p -= t.deltaHighLevelAdjacencyLoss;
+    p += mergeTimingSlideDelta(before, after, t);
   }
   return p;
 }

@@ -13,6 +13,7 @@ import {
   experimentBEndgameTuning,
   experimentCEndgameTuning,
   experimentCEndgameWith78Tuning,
+  experimentCEndgameWith78MergeTiming,
 } from "./endgameTuning";
 
 const ORDER_TIE: Direction[] = ["DOWN", "UP", "LEFT", "RIGHT"];
@@ -439,3 +440,9 @@ export const expectimaxPolicySelectiveLate3PlyExperimentC: Policy = createSelect
 export const expectimaxPolicySelectiveLate3PlyExperimentCWith78: Policy = createSelectiveLate3PlyPolicy({
   tuning: experimentCEndgameWith78Tuning,
 });
+
+/** C+78 + merge timing(즉시 7/8 머지 선호·슬라이드 델타) */
+export const expectimaxPolicySelectiveLate3PlyExperimentCWith78MergeTiming: Policy =
+  createSelectiveLate3PlyPolicy({
+    tuning: experimentCEndgameWith78MergeTiming,
+  });

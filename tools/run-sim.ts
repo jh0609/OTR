@@ -13,6 +13,7 @@ import {
   createRng,
   expectimaxPolicySelectiveLate3PlyExperimentC,
   expectimaxPolicySelectiveLate3PlyExperimentCWith78,
+  expectimaxPolicySelectiveLate3PlyExperimentCWith78MergeTiming,
   simulateOne,
   TERMINAL_REASONS,
   type MonteCarloStats,
@@ -76,8 +77,8 @@ function printStructureSummaryBlock(
   totalEpisodes: number
 ): void {
   const cols = rows.map((r) => r.label);
-  const metricW = 28;
-  const colW = 14;
+  const metricW = 30;
+  const colW = 12;
 
   console.log("\n  ========== 구조 지표 요약 (복사용) ==========");
   console.log(
@@ -99,6 +100,12 @@ function printStructureSummaryBlock(
   line("final adjacent 7+7", (s) => `${s.episodesFinalAdjacent77} (${pct(s.episodesFinalAdjacent77, totalEpisodes)}%)`);
   line("final adjacent 8+7", (s) => `${s.episodesFinalAdjacent87} (${pct(s.episodesFinalAdjacent87, totalEpisodes)}%)`);
   line("final adjacent 8+8", (s) => `${s.episodesFinalAdjacent88} (${pct(s.episodesFinalAdjacent88, totalEpisodes)}%)`);
+  line("ever immediate merge7", (s) => `${s.episodesEverImmediateMerge7} (${pct(s.episodesEverImmediateMerge7, totalEpisodes)}%)`);
+  line("ever immediate merge8", (s) => `${s.episodesEverImmediateMerge8} (${pct(s.episodesEverImmediateMerge8, totalEpisodes)}%)`);
+  line("ever adj7+7 no imm7", (s) => `${s.episodesEverAdjacent77NoImmediate7} (${pct(s.episodesEverAdjacent77NoImmediate7, totalEpisodes)}%)`);
+  line("ever adj8+8 no imm8", (s) => `${s.episodesEverAdjacent88NoImmediate8} (${pct(s.episodesEverAdjacent88NoImmediate8, totalEpisodes)}%)`);
+  line("final canMerge7Now", (s) => `${s.episodesFinalCanMerge7Now} (${pct(s.episodesFinalCanMerge7Now, totalEpisodes)}%)`);
+  line("final canMerge8Now", (s) => `${s.episodesFinalCanMerge8Now} (${pct(s.episodesFinalCanMerge8Now, totalEpisodes)}%)`);
   line("ever max8+second6", (s) => `${s.episodesEverMax8Second6} (${pct(s.episodesEverMax8Second6, totalEpisodes)}%)`);
   line("ever max8+second7", (s) => `${s.episodesEverMax8Second7} (${pct(s.episodesEverMax8Second7, totalEpisodes)}%)`);
   line("mp7>0 while max≥8 (episodes)", (s) => `${s.episodesEverMp7PositiveWhileMaxGte8} (${pct(s.episodesEverMp7PositiveWhileMaxGte8, totalEpisodes)}%)`);
@@ -158,6 +165,25 @@ function printMonteCarloStats(stats: MonteCarloStats, totalEpisodes: number): vo
   console.log(
     `    final adjacent 8+8: ${stats.episodesFinalAdjacent88} (${pct(stats.episodesFinalAdjacent88, totalEpisodes)}%)`
   );
+  console.log("    --- merge timing ---");
+  console.log(
+    `    ever immediate merge7: ${stats.episodesEverImmediateMerge7} (${pct(stats.episodesEverImmediateMerge7, totalEpisodes)}%)`
+  );
+  console.log(
+    `    ever immediate merge8: ${stats.episodesEverImmediateMerge8} (${pct(stats.episodesEverImmediateMerge8, totalEpisodes)}%)`
+  );
+  console.log(
+    `    ever adj 7+7 but no imm merge7: ${stats.episodesEverAdjacent77NoImmediate7} (${pct(stats.episodesEverAdjacent77NoImmediate7, totalEpisodes)}%)`
+  );
+  console.log(
+    `    ever adj 8+8 but no imm merge8: ${stats.episodesEverAdjacent88NoImmediate8} (${pct(stats.episodesEverAdjacent88NoImmediate8, totalEpisodes)}%)`
+  );
+  console.log(
+    `    final canMerge7Now: ${stats.episodesFinalCanMerge7Now} (${pct(stats.episodesFinalCanMerge7Now, totalEpisodes)}%)`
+  );
+  console.log(
+    `    final canMerge8Now: ${stats.episodesFinalCanMerge8Now} (${pct(stats.episodesFinalCanMerge8Now, totalEpisodes)}%)`
+  );
   console.log(
     `    ever max8+second6 snapshot: ${stats.episodesEverMax8Second6} (${pct(stats.episodesEverMax8Second6, totalEpisodes)}%)`
   );
@@ -208,12 +234,17 @@ function printMonteCarloStats(stats: MonteCarloStats, totalEpisodes: number): vo
 
 console.log(`Monte Carlo (episodes=${n}, seed=${seed}, mode=standard)\n`);
 console.log(
-  "  정책: selective late 3-ply + scoreBoardV3. 비교 — (1) experiment C 최적  (2) C + 7→8 merge potential / 8+7 엔드게임\n"
+  "  정책: selective late 3-ply + scoreBoardV3. 비교 — (1) C  (2) C+78  (3) C+78 + merge timing\n"
 );
 
 const policies: { name: string; label: string; p: Policy }[] = [
   { name: "(1) experiment C (best 페널티·rebuild)", label: "C", p: expectimaxPolicySelectiveLate3PlyExperimentC },
   { name: "(2) C + endgame7→8 + ultra late slide", label: "C+78", p: expectimaxPolicySelectiveLate3PlyExperimentCWith78 },
+  {
+    name: "(3) C+78 + merge timing (즉시 머지)",
+    label: "C+78+MT",
+    p: expectimaxPolicySelectiveLate3PlyExperimentCWith78MergeTiming,
+  },
 ];
 
 const summaryRows: { label: string; stats: MonteCarloStats }[] = [];

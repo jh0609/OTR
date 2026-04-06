@@ -1,12 +1,6 @@
 /**
- * UI 힌트 버튼용: 현재 보드에서 4방향 기대값을 beam expectimax로 근사하고 최선 방향 1개 반환.
- *
- * 사용 예:
- * ```ts
- * import { getHint } from "./sim";
- * const hint = getHint(board, { depthLate: 10, beamWidthLate: 12, tuning: myTuning });
- * console.log(hint.bestDirection, hint.scores);
- * ```
+ * UI 힌트 버튼용: 4방향 각각에 대해 expectimax 근사(깊이 d)로 기대값을 구하고 최선 방향 1개 반환.
+ * 3×3에서는 빈 칸당 스폰을 전부 펼쳐 균등 기대(패망 스폰은 TERMINAL_LOSS, 생존만 재귀) — 스폰 빔 컷 없음.
  */
 import type { Board, Direction } from "./types";
 import { maxTileLevel } from "./board";
@@ -15,11 +9,7 @@ import { spawnAll } from "./spawn";
 import { legalActions } from "./legal";
 import { isTerminal } from "./terminal";
 import { scoreBoardV3 } from "./scoringV3";
-import {
-  lateGameSlidePenalty,
-  mergePotentialAtLevel,
-  endgame7To8Potential,
-} from "./boardStats";
+import { lateGameSlidePenalty } from "./boardStats";
 import type { EndgameTuning, EndgameTuningConfig } from "./endgameTuning";
 import { mergeEndgameTuning } from "./endgameTuning";
 
@@ -32,6 +22,7 @@ export type HintSearchConfig = {
   lateThreshold?: number;
   depthEarly?: number;
   depthLate?: number;
+  /** 결과 `HintResult.beamWidth`에만 반영(스폰은 3×3에서 전부 펼침). */
   beamWidthEarly?: number;
   beamWidthLate?: number;
   tuning?: EndgameTuningConfig;
@@ -53,28 +44,12 @@ export type HintResult = {
   bestDirection: Direction;
   scores: Record<Direction, number | null>;
   searchedDepth: number;
+  /** 설정값 기록용(탐색에서는 스폰 전부 사용). */
   beamWidth: number;
   debug?: HintDebug;
 };
 
-function beamScoreValue(board: Board, t: EndgameTuning): number {
-  let s = scoreBoardV3(board, t);
-  if (maxTileLevel(board) >= 7) {
-    s += 0.05 * mergePotentialAtLevel(board, 7);
-    s += 0.02 * endgame7To8Potential(board, t);
-  }
-  return s;
-}
-
-function pruneSpawnOutcomes(outs: Board[], beamW: number, t: EndgameTuning): Board[] {
-  if (outs.length <= beamW) return outs;
-  const scored = outs.map((b) => ({ b, sc: beamScoreValue(b, t) }));
-  scored.sort((a, b) => b.sc - a.sc);
-  return scored.slice(0, beamW).map((x) => x.b);
-}
-
 /**
- * 후반(또는 설정) 기준 stochastic beam expectimax로
  * 네 방향 각각의 기대값을 구하고 최선 방향 1개를 반환.
  */
 export function getHint(board: Board, config?: HintSearchConfig): HintResult {
@@ -136,22 +111,20 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
         const v = isTerminal(next, "standard") ? TERMINAL_LOSS : scoreBoardV3(next, t);
         return pen + v;
       }
-      const pruned0 = pruneSpawnOutcomes(outs, beamWidth, t);
       let sum0 = 0;
-      for (const s of pruned0) {
+      for (const s of outs) {
         sum0 += isTerminal(s, "standard") ? TERMINAL_LOSS : scoreBoardV3(s, t);
       }
-      return pen + sum0 / pruned0.length;
+      return pen + sum0 / outs.length;
     }
     if (outs.length === 0) {
       return pen + cachedSearch(next, d - 1);
     }
-    const pruned = pruneSpawnOutcomes(outs, beamWidth, t);
     let sum = 0;
-    for (const s of pruned) {
-      sum += cachedSearch(s, d - 1);
+    for (const s of outs) {
+      sum += isTerminal(s, "standard") ? TERMINAL_LOSS : cachedSearch(s, d - 1);
     }
-    return pen + sum / pruned.length;
+    return pen + sum / outs.length;
   }
 
   const acts = legalActions(board);

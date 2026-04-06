@@ -77,6 +77,14 @@ export type EpisodeResult = {
   readonly finalHasAdjacent77: boolean;
   readonly finalHasAdjacent87: boolean;
   readonly finalHasAdjacent88: boolean;
+
+  readonly everHadImmediateMerge7: boolean;
+  readonly everHadImmediateMerge8: boolean;
+  /** 인접 7+7은 있는데 한 수로 7머지는 불가 */
+  readonly everHadAdjacent77ButNoImmediateMerge7: boolean;
+  readonly everHadAdjacent88ButNoImmediateMerge8: boolean;
+  readonly finalCanMerge7Now: boolean;
+  readonly finalCanMerge8Now: boolean;
 };
 
 export type MonteCarloStats = {
@@ -121,4 +129,11 @@ export type MonteCarloStats = {
   readonly episodesFinalAdjacent77: number;
   readonly episodesFinalAdjacent87: number;
   readonly episodesFinalAdjacent88: number;
+
+  readonly episodesEverImmediateMerge7: number;
+  readonly episodesEverImmediateMerge8: number;
+  readonly episodesEverAdjacent77NoImmediate7: number;
+  readonly episodesEverAdjacent88NoImmediate8: number;
+  readonly episodesFinalCanMerge7Now: number;
+  readonly episodesFinalCanMerge8Now: number;
 };

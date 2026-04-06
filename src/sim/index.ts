@@ -72,6 +72,7 @@ export {
   experimentBEndgameTuning,
   experimentCEndgameTuning,
   experimentCEndgameWith78Tuning,
+  experimentCEndgameWith78MergeTiming,
   type EndgameTuning,
   type EndgameTuningConfig,
 } from "./endgameTuning";
@@ -98,6 +99,7 @@ export {
   expectimaxPolicySelectiveLate3PlyExperimentB,
   expectimaxPolicySelectiveLate3PlyExperimentC,
   expectimaxPolicySelectiveLate3PlyExperimentCWith78,
+  expectimaxPolicySelectiveLate3PlyExperimentCWith78MergeTiming,
   type ExpectimaxConfig,
   type ExpectimaxDepth,
   type ExpectimaxFns,
@@ -131,6 +133,10 @@ export {
   hasAdjacentCrossPair,
   highLevelAdjacencyState,
   type HighLevelAdjState,
+  hasImmediateMerge,
+  immediateMergeCount,
+  countMergesAtLevelInSlide,
+  mergeTimingSlideDelta,
 } from "./boardStats";
 
 export { simulateOne, runMonteCarlo, emptyBoard, boardFrom } from "./simulate";

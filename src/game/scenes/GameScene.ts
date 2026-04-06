@@ -3,12 +3,7 @@ import type { Board } from "../core/types";
 import { SCENE_KEYS } from "../constants";
 import { GAME_WIDTH } from "../config";
 import { step as coreStep, isGameOver, hasWon, getEmptyCount } from "../core";
-import {
-  getHint,
-  experimentCEndgameWith78Tuning,
-  type HintSearchConfig,
-  type HintResult,
-} from "../../sim";
+import { getHint, experimentCEndgameWith78Tuning, type HintSearchConfig } from "../../sim";
 import { gameBoardToSim, simDirectionToGame } from "../hintBridge";
 import { copyBoard } from "../core/board";
 import { setBestScore } from "../storage";
@@ -81,10 +76,6 @@ export class GameScene extends Phaser.Scene {
   private dragActive = false;
   /** Only the state before the last successful move can be restored. */
   private lastUndoSnapshot: UndoSnapshot | null = null;
-  private hintLastBoardKey: string | null = null;
-  private hintLastResult: HintResult | null = null;
-  private readonly hintValueCache = new Map<string, number>();
-
   constructor() {
     super({ key: SCENE_KEYS.GAME });
   }
@@ -114,9 +105,6 @@ export class GameScene extends Phaser.Scene {
     this.dragTraceGraphics.setDepth(25);
     this.registry.set(REG_UNDO_AVAILABLE, false);
     this.registry.set(REG_HINT_BUSY, false);
-    this.hintLastBoardKey = null;
-    this.hintLastResult = null;
-    this.hintValueCache.clear();
     this.refreshBoard();
     this.setupInput();
     this.game.events.on("requestUndo", this.performUndo, this);
@@ -335,7 +323,6 @@ export class GameScene extends Phaser.Scene {
       beamWidthEarly: 8,
       depthLate: 12,
       beamWidthLate: 14,
-      valueCache: this.hintValueCache,
     };
   }
 
@@ -348,23 +335,11 @@ export class GameScene extends Phaser.Scene {
     if (isGameOver(board)) return;
 
     const simBoard = gameBoardToSim(board);
-    const boardKey = simBoard.join(",");
-
-    if (this.hintLastBoardKey === boardKey && this.hintLastResult) {
-      this.enqueueMove(simDirectionToGame(this.hintLastResult.bestDirection));
-      return;
-    }
-
-    if (this.hintValueCache.size > 200_000) {
-      this.hintValueCache.clear();
-    }
 
     this.registry.set(REG_HINT_BUSY, true);
     this.game.events.emit("stateChanged");
     try {
       const hint = getHint(simBoard, this.hintSearchOptions());
-      this.hintLastBoardKey = boardKey;
-      this.hintLastResult = hint;
       this.enqueueMove(simDirectionToGame(hint.bestDirection));
     } finally {
       this.registry.set(REG_HINT_BUSY, false);

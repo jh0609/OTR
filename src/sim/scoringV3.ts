@@ -11,6 +11,7 @@ import {
   countTilesEqual,
   hasAdjacentCrossPair,
   hasAdjacentPair,
+  hasImmediateMerge,
   rebuildLaneScore,
   secondMaxTile,
   trappedAroundMaxTile,
@@ -121,6 +122,13 @@ function scorePhase3(board: Board, t: EndgameTuning): number {
   } else if (count7 >= 2 && !hasAdjacentPair(board, 7)) {
     score -= t.penalty77NotAdjacent;
   }
+
+  const canMerge7Now = hasImmediateMerge(board, 7);
+  const canMerge8Now = hasImmediateMerge(board, 8);
+  if (canMerge7Now) score += t.mergeNow7Bonus;
+  if (canMerge8Now) score += t.mergeNow8Bonus;
+  if (count7 >= 2 && !canMerge7Now) score -= t.deferMerge7Penalty;
+  if (count8 >= 2 && !canMerge8Now) score -= t.deferMerge8Penalty;
 
   const ultraEndgame =
     (mx >= 8 && sm >= 7) || (count7 >= 2 && mx >= 7);

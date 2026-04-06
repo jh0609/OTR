@@ -14,6 +14,7 @@ import {
   hasMax8AndSecond7,
   hasAdjacentCrossPair,
   hasAdjacentPair,
+  hasImmediateMerge,
   mergePotentialAtLevel,
 } from "./boardStats";
 import { slide } from "./slide";
@@ -44,6 +45,10 @@ type MutableEpisodeStats = {
   everAdjacent77: boolean;
   everAdjacent87: boolean;
   everAdjacent88: boolean;
+  everImm7: boolean;
+  everImm8: boolean;
+  everAdj77NoImm7: boolean;
+  everAdj88NoImm8: boolean;
 };
 
 function makeStats(): MutableEpisodeStats {
@@ -68,6 +73,10 @@ function makeStats(): MutableEpisodeStats {
     everAdjacent77: false,
     everAdjacent87: false,
     everAdjacent88: false,
+    everImm7: false,
+    everImm8: false,
+    everAdj77NoImm7: false,
+    everAdj88NoImm8: false,
   };
 }
 
@@ -106,6 +115,11 @@ function observeBoard(board: Board, s: MutableEpisodeStats): void {
   if (c7 >= 2 && hasAdjacentPair(board, 7)) s.everAdjacent77 = true;
   if (c8 >= 1 && c7 >= 1 && hasAdjacentCrossPair(board, 8, 7)) s.everAdjacent87 = true;
   if (c8 >= 2 && hasAdjacentPair(board, 8)) s.everAdjacent88 = true;
+
+  if (hasImmediateMerge(board, 7)) s.everImm7 = true;
+  if (hasImmediateMerge(board, 8)) s.everImm8 = true;
+  if (hasAdjacentPair(board, 7) && !hasImmediateMerge(board, 7)) s.everAdj77NoImm7 = true;
+  if (hasAdjacentPair(board, 8) && !hasImmediateMerge(board, 8)) s.everAdj88NoImm8 = true;
 }
 
 function finalize(
@@ -153,6 +167,13 @@ function finalize(
     finalHasAdjacent87:
       c8f >= 1 && c7f >= 1 && hasAdjacentCrossPair(terminalBoard, 8, 7),
     finalHasAdjacent88: c8f >= 2 && hasAdjacentPair(terminalBoard, 8),
+
+    everHadImmediateMerge7: s.everImm7,
+    everHadImmediateMerge8: s.everImm8,
+    everHadAdjacent77ButNoImmediateMerge7: s.everAdj77NoImm7,
+    everHadAdjacent88ButNoImmediateMerge8: s.everAdj88NoImm8,
+    finalCanMerge7Now: hasImmediateMerge(terminalBoard, 7),
+    finalCanMerge8Now: hasImmediateMerge(terminalBoard, 8),
   };
 }
 
@@ -261,6 +282,12 @@ export function runMonteCarlo(
   let episodesFinalAdjacent77 = 0;
   let episodesFinalAdjacent87 = 0;
   let episodesFinalAdjacent88 = 0;
+  let episodesEverImmediateMerge7 = 0;
+  let episodesEverImmediateMerge8 = 0;
+  let episodesEverAdjacent77NoImmediate7 = 0;
+  let episodesEverAdjacent88NoImmediate8 = 0;
+  let episodesFinalCanMerge7Now = 0;
+  let episodesFinalCanMerge8Now = 0;
   const terminalReasons = emptyTerminalReasons();
 
   for (let i = 0; i < n; i++) {
@@ -300,6 +327,12 @@ export function runMonteCarlo(
     if (r.finalHasAdjacent77) episodesFinalAdjacent77++;
     if (r.finalHasAdjacent87) episodesFinalAdjacent87++;
     if (r.finalHasAdjacent88) episodesFinalAdjacent88++;
+    if (r.everHadImmediateMerge7) episodesEverImmediateMerge7++;
+    if (r.everHadImmediateMerge8) episodesEverImmediateMerge8++;
+    if (r.everHadAdjacent77ButNoImmediateMerge7) episodesEverAdjacent77NoImmediate7++;
+    if (r.everHadAdjacent88ButNoImmediateMerge8) episodesEverAdjacent88NoImmediate8++;
+    if (r.finalCanMerge7Now) episodesFinalCanMerge7Now++;
+    if (r.finalCanMerge8Now) episodesFinalCanMerge8Now++;
     terminalReasons[r.terminalReason]++;
   }
 
@@ -338,6 +371,12 @@ export function runMonteCarlo(
     episodesFinalAdjacent77,
     episodesFinalAdjacent87,
     episodesFinalAdjacent88,
+    episodesEverImmediateMerge7,
+    episodesEverImmediateMerge8,
+    episodesEverAdjacent77NoImmediate7,
+    episodesEverAdjacent88NoImmediate8,
+    episodesFinalCanMerge7Now,
+    episodesFinalCanMerge8Now,
   };
 }
 

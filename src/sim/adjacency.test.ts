@@ -4,6 +4,8 @@ import {
   areAdjacent,
   hasAdjacentCrossPair,
   hasAdjacentPair,
+  hasImmediateMerge,
+  immediateMergeCount,
   highLevelAdjacencyState,
 } from "./boardStats";
 
@@ -32,5 +34,13 @@ describe("adjacency helpers", () => {
     expect(highLevelAdjacencyState(boardFrom([8, 7, 0, 0, 0, 0, 0, 0, 0]))).toBe("87");
     expect(highLevelAdjacencyState(boardFrom([7, 7, 0, 0, 0, 0, 0, 0, 0]))).toBe("77");
     expect(highLevelAdjacencyState(boardFrom([8, 0, 8, 0, 0, 0, 0, 0, 0]))).toBe("none");
+  });
+
+  it("hasImmediateMerge / immediateMergeCount", () => {
+    const row = boardFrom([7, 7, 0, 0, 0, 0, 0, 0, 0]);
+    expect(hasImmediateMerge(row, 7)).toBe(true);
+    expect(immediateMergeCount(row, 7)).toBeGreaterThanOrEqual(1);
+    expect(hasImmediateMerge(boardFrom([7, 0, 7, 0, 0, 0, 0, 0, 0]), 7)).toBe(true);
+    expect(hasImmediateMerge(boardFrom([7, 0, 0, 0, 7, 0, 0, 0, 0]), 7)).toBe(false);
   });
 });
