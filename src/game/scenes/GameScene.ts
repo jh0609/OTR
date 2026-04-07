@@ -387,7 +387,7 @@ export class GameScene extends Phaser.Scene {
       beamWidthEarly: 8,
       depthLate: 10,
       beamWidthLate: 14,
-      maxMs: 35,
+      maxMs: 500,
       maxExpandedNodes: 90_000,
       valueCache: this.hintValueCache,
       leafScoreCache: this.hintLeafScoreCache,

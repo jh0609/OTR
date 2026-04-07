@@ -43,7 +43,7 @@ const simMaxSlideCache = Number(process.env.SIM_HINT_MAX_SLIDE_CACHE ?? "400000"
 const simHintProgressEvery = Number(process.env.SIM_HINT_PROGRESS_EVERY ?? "0");
 /** Progress log interval during TRACE mode (steps). */
 const simTraceProgressEvery = Number(process.env.SIM_TRACE_PROGRESS_EVERY ?? "0");
-const simHintMaxMs = Number(process.env.SIM_HINT_MAX_MS ?? "0");
+const simHintMaxMs = Number(process.env.SIM_HINT_MAX_MS ?? "500");
 const simHintMaxExpandedNodes = Number(process.env.SIM_HINT_MAX_EXPANDED_NODES ?? "0");
 const simHintMaxMsSweepRaw = process.env.SIM_HINT_MAX_MS_SWEEP ?? "";
 const simHintPrewarm = Number(process.env.SIM_HINT_PREWARM ?? "12");
