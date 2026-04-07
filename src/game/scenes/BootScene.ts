@@ -8,6 +8,7 @@ import {
   getQuickResetEnabled,
   getSwipeThreshold,
   getShowDragTrace,
+  getAutoHintEnabled,
 } from "../storage";
 import { TILE_TEXTURE_SOURCES } from "../assets";
 import {
@@ -24,6 +25,7 @@ import {
   REG_SWIPE_THRESHOLD,
   REG_WIN_EFFECT_DONE,
   REG_SHOW_DRAG_TRACE,
+  REG_AUTO_HINT_ENABLED,
 } from "../registry";
 
 export class BootScene extends Phaser.Scene {
@@ -60,6 +62,7 @@ export class BootScene extends Phaser.Scene {
     this.registry.set(REG_QUICK_RESET_ENABLED, getQuickResetEnabled());
     this.registry.set(REG_SWIPE_THRESHOLD, getSwipeThreshold());
     this.registry.set(REG_SHOW_DRAG_TRACE, getShowDragTrace());
+    this.registry.set(REG_AUTO_HINT_ENABLED, getAutoHintEnabled());
     this.registry.set(REG_WIN_EFFECT_DONE, true);
 
     this.scene.start(SCENE_KEYS.GAME);

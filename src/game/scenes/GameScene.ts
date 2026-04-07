@@ -31,6 +31,7 @@ import {
   REG_UNDO_AVAILABLE,
   REG_HINT_BUSY,
   REG_SHOW_DRAG_TRACE,
+  REG_AUTO_HINT_ENABLED,
 } from "../registry";
 
 // 타일이 셀의 약 70~75%를 차지하도록 약간 크게 설정.
@@ -76,6 +77,7 @@ export class GameScene extends Phaser.Scene {
   private dragActive = false;
   /** Only the state before the last successful move can be restored. */
   private lastUndoSnapshot: UndoSnapshot | null = null;
+  private autoHintScheduled = false;
   /** 연속 힌트 호출 간 재사용; `getHint` 종료 시 상한 초과분은 오래된 키부터 제거. */
   private readonly hintValueCache = new Map<string, number>();
   private readonly hintLeafScoreCache = new Map<string, number>();
@@ -308,7 +310,26 @@ export class GameScene extends Phaser.Scene {
     this.bufferedDirection = null;
     if (next) {
       this.tryMove(next);
+      return;
     }
+    this.maybeScheduleAutoHint();
+  }
+
+  private maybeScheduleAutoHint(): void {
+    if (this.autoHintScheduled) return;
+    if (this.registry.get(REG_AUTO_HINT_ENABLED) !== true) return;
+    if (this.registry.get(REG_UI_MODAL_OPEN) === true) return;
+    if (this.registry.get(REG_GAMEOVER) === true) return;
+    if (this.registry.get(REG_HINT_BUSY) === true) return;
+    if (this.inputLocked || this.hardInputLock) return;
+    const board = this.registry.get(REG_BOARD) as Board;
+    if (isGameOver(board)) return;
+
+    this.autoHintScheduled = true;
+    this.time.delayedCall(0, () => {
+      this.autoHintScheduled = false;
+      this.performHint();
+    });
   }
 
   private clearBufferedInput(): void {

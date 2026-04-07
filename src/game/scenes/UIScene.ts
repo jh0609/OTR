@@ -21,6 +21,7 @@ import {
   REG_SWIPE_THRESHOLD,
   REG_UNDO_AVAILABLE,
   REG_HINT_BUSY,
+  REG_AUTO_HINT_ENABLED,
   REG_SHOW_DRAG_TRACE,
 } from "../registry";
 import {
@@ -29,6 +30,7 @@ import {
   setQuickResetEnabled,
   setSwipeThreshold,
   setShowDragTrace,
+  setAutoHintEnabled,
 } from "../storage";
 
 const CLOSE_BTN_SIZE = 44;
@@ -53,6 +55,8 @@ export class UIScene extends Phaser.Scene {
   private static readonly DEFAULT_TEXT_BASE_SIZE = 15;
   private quickResetEnabled = false;
   private quickResetValueText!: Phaser.GameObjects.Text;
+  private autoHintEnabled = false;
+  private autoHintValueText!: Phaser.GameObjects.Text;
   private heroPulseOverlay!: Phaser.GameObjects.Rectangle;
   private heroAbsorbShimmer!: Phaser.GameObjects.Arc;
   private rainbowTravelOrb: Phaser.GameObjects.Container | null = null;
@@ -492,6 +496,9 @@ export class UIScene extends Phaser.Scene {
       persistOptionsSlidersToStorage();
       this.registry.set(REG_UI_MODAL_OPEN, false);
       this.optionsOverlay.setVisible(false);
+      if (this.registry.get(REG_AUTO_HINT_ENABLED) === true) {
+        this.game.events.emit("requestHint");
+      }
     };
 
     const card = this.add.graphics();
@@ -621,6 +628,18 @@ export class UIScene extends Phaser.Scene {
       fontStyle: "700",
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
+    const autoHintLabel = this.add.text(cardX + 26, cardY + 348, "Auto hint", {
+      fontSize: "15px",
+      color: "#111827",
+      fontStyle: "700",
+    }).setOrigin(0, 0.5);
+
+    this.autoHintValueText = this.add.text(cardX + cardW - 26, cardY + 348, "☐", {
+      fontSize: "24px",
+      color: "#111827",
+      fontStyle: "700",
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
     const setFromPosition = (pointerX: number): void => {
       const ratio = Phaser.Math.Clamp((pointerX - sliderX) / sliderW, 0, 1);
       const next = Math.round(ratio * 200);
@@ -668,6 +687,9 @@ export class UIScene extends Phaser.Scene {
     this.inputTraceValueText.on("pointerdown", () => {
       this.setInputTraceState(!this.inputTraceEnabled, true);
     });
+    this.autoHintValueText.on("pointerdown", () => {
+      this.setAutoHintState(!this.autoHintEnabled, true);
+    });
 
     const speedRaw = this.registry.get(REG_ANIM_SPEED_PERCENT);
     const speed = typeof speedRaw === "number" ? speedRaw : 100;
@@ -703,6 +725,8 @@ export class UIScene extends Phaser.Scene {
       swipeHit,
       traceLabel,
       this.inputTraceValueText,
+      autoHintLabel,
+      this.autoHintValueText,
     ]);
     this.optionsOverlay.setDepth(1000);
     this.optionsOverlay.setVisible(false);
@@ -880,6 +904,17 @@ export class UIScene extends Phaser.Scene {
     }
   }
 
+  private setAutoHintState(enabled: boolean, persist = true): void {
+    this.autoHintEnabled = enabled;
+    this.registry.set(REG_AUTO_HINT_ENABLED, enabled);
+    if (persist) {
+      setAutoHintEnabled(enabled);
+    }
+    if (this.autoHintValueText) {
+      this.autoHintValueText.setText(enabled ? "☑" : "☐");
+    }
+  }
+
   private refreshFromRegistry(): void {
     const score = this.registry.get(REG_SCORE) as number;
     const best = this.registry.get(REG_BEST) as number;
@@ -908,6 +943,10 @@ export class UIScene extends Phaser.Scene {
     const traceRaw = this.registry.get(REG_SHOW_DRAG_TRACE);
     if (this.inputTraceValueText) {
       this.setInputTraceState(Boolean(traceRaw), false);
+    }
+    const autoHintRaw = this.registry.get(REG_AUTO_HINT_ENABLED);
+    if (this.autoHintValueText) {
+      this.setAutoHintState(Boolean(autoHintRaw), false);
     }
 
     this.winOverlay.setVisible(false);

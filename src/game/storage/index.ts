@@ -9,6 +9,7 @@ const TEXT_BASE_SIZE_KEY = "otr-text-base-size";
 const QUICK_RESET_KEY = "otr-quick-reset-enabled";
 const SWIPE_THRESHOLD_KEY = "otr-swipe-threshold";
 const SHOW_DRAG_TRACE_KEY = "otr-show-drag-trace";
+const AUTO_HINT_KEY = "otr-auto-hint-enabled";
 
 export function getBestScore(): number {
   if (typeof window === "undefined" || !window.localStorage) return 0;
@@ -86,4 +87,14 @@ export function getShowDragTrace(): boolean {
 export function setShowDragTrace(enabled: boolean): void {
   if (typeof window === "undefined" || !window.localStorage) return;
   window.localStorage.setItem(SHOW_DRAG_TRACE_KEY, enabled ? "1" : "0");
+}
+
+export function getAutoHintEnabled(): boolean {
+  if (typeof window === "undefined" || !window.localStorage) return false;
+  return window.localStorage.getItem(AUTO_HINT_KEY) === "1";
+}
+
+export function setAutoHintEnabled(enabled: boolean): void {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  window.localStorage.setItem(AUTO_HINT_KEY, enabled ? "1" : "0");
 }

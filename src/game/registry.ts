@@ -19,5 +19,7 @@ export const REG_WIN_EFFECT_DONE = "winEffectDone";
 export const REG_UNDO_AVAILABLE = "undoAvailable";
 /** True while `getHint` is running (GameScene); UIScene disables the hint control. */
 export const REG_HINT_BUSY = "hintBusy";
+/** If enabled, GameScene automatically triggers hints when idle. */
+export const REG_AUTO_HINT_ENABLED = "autoHintEnabled";
 /** Debug: draw swipe path + end marker (localStorage). */
 export const REG_SHOW_DRAG_TRACE = "showDragTrace";
