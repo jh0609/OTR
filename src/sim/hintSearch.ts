@@ -32,7 +32,20 @@ export type HintSearchConfig = {
    * 호출 간 유지할 값 캐시 (`depth:board` 키). 동일 튜닝·깊이·빔 설정으로 연속 호출 시 재사용하면 탐색이 가속됨.
    */
   valueCache?: Map<string, number>;
+  /** 호출 간 `scoreBoardV3` 메모(보드 키). 연속 힌트에서 겹치는 국면 재사용. */
+  leafScoreCache?: Map<string, number>;
+  /** 호출 간 `lateGameSlidePenalty(before|after)` 메모. */
+  slidePenaltyCache?: Map<string, number>;
+  /** 세션 캐시 상한(초과 시 가장 먼저 넣은 항목부터 삭제). */
+  maxValueCacheSize?: number;
+  maxLeafScoreCacheSize?: number;
+  maxSlidePenaltyCacheSize?: number;
 };
+
+/** 기본 상한 — 메모리 폭주 방지용 슬라이딩 윈도우에 가깝게 동작. */
+export const DEFAULT_HINT_MAX_VALUE_CACHE = 120_000;
+export const DEFAULT_HINT_MAX_LEAF_CACHE = 60_000;
+export const DEFAULT_HINT_MAX_SLIDE_CACHE = 40_000;
 
 export type HintDebug = {
   expandedNodes: number;
@@ -52,6 +65,18 @@ export type HintResult = {
 /**
  * 네 방향 각각의 기대값을 구하고 최선 방향 1개를 반환.
  */
+function boardKey(b: Board): string {
+  return b.join(",");
+}
+
+function trimMapToMax(m: Map<string, number>, max: number): void {
+  while (m.size > max) {
+    const k = m.keys().next().value;
+    if (k === undefined) break;
+    m.delete(k);
+  }
+}
+
 export function getHint(board: Board, config?: HintSearchConfig): HintResult {
   const t = mergeEndgameTuning(config?.tuning);
   const lateThreshold = config?.lateThreshold ?? 7;
@@ -61,6 +86,27 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
   const beamWidth = isLate ? (config?.beamWidthLate ?? 12) : (config?.beamWidthEarly ?? 6);
 
   const cache = config?.valueCache ?? new Map<string, number>();
+  const leafScoreMemo = config?.leafScoreCache ?? new Map<string, number>();
+  const slidePenaltyMemo = config?.slidePenaltyCache ?? new Map<string, number>();
+
+  function leafScore(b: Board): number {
+    const k = boardKey(b);
+    const hit = leafScoreMemo.get(k);
+    if (hit !== undefined) return hit;
+    const v = scoreBoardV3(b, t);
+    leafScoreMemo.set(k, v);
+    return v;
+  }
+
+  function slidePenalty(before: Board, after: Board): number {
+    const k = `${boardKey(before)}|${boardKey(after)}`;
+    const hit = slidePenaltyMemo.get(k);
+    if (hit !== undefined) return hit;
+    const v = lateGameSlidePenalty(before, after, 8, t);
+    slidePenaltyMemo.set(k, v);
+    return v;
+  }
+
   let expandedNodes = 0;
   let cacheHits = 0;
 
@@ -86,7 +132,7 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
       return TERMINAL_LOSS;
     }
     if (d <= 0) {
-      return scoreBoardV3(b, t);
+      return leafScore(b);
     }
     const acts = legalActions(b);
     let best = -Infinity;
@@ -95,25 +141,25 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
       const q = evaluateActionValue(b, dir, d);
       if (q !== null) best = Math.max(best, q);
     }
-    return best === -Infinity ? scoreBoardV3(b, t) : best;
+    return best === -Infinity ? leafScore(b) : best;
   }
 
   function evaluateActionValue(b: Board, dir: Direction, d: number): number | null {
     const { next, moved, win } = slide(b, dir);
     if (!moved) return null;
-    const pen = lateGameSlidePenalty(b, next, 8, t);
+    const pen = slidePenalty(b, next);
     if (win) {
-      return pen + scoreBoardV3(next, t);
+      return pen + leafScore(next);
     }
     const outs = spawnAll(next);
     if (d <= 0) {
       if (outs.length === 0) {
-        const v = isTerminal(next, "standard") ? TERMINAL_LOSS : scoreBoardV3(next, t);
+        const v = isTerminal(next, "standard") ? TERMINAL_LOSS : leafScore(next);
         return pen + v;
       }
       let sum0 = 0;
       for (const s of outs) {
-        sum0 += isTerminal(s, "standard") ? TERMINAL_LOSS : scoreBoardV3(s, t);
+        sum0 += isTerminal(s, "standard") ? TERMINAL_LOSS : leafScore(s);
       }
       return pen + sum0 / outs.length;
     }
@@ -171,6 +217,10 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
       rootActionCount: rootEvaluated,
     };
   }
+
+  trimMapToMax(cache, config?.maxValueCacheSize ?? DEFAULT_HINT_MAX_VALUE_CACHE);
+  trimMapToMax(leafScoreMemo, config?.maxLeafScoreCacheSize ?? DEFAULT_HINT_MAX_LEAF_CACHE);
+  trimMapToMax(slidePenaltyMemo, config?.maxSlidePenaltyCacheSize ?? DEFAULT_HINT_MAX_SLIDE_CACHE);
 
   return result;
 }

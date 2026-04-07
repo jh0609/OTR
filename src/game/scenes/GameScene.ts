@@ -76,6 +76,10 @@ export class GameScene extends Phaser.Scene {
   private dragActive = false;
   /** Only the state before the last successful move can be restored. */
   private lastUndoSnapshot: UndoSnapshot | null = null;
+  /** 연속 힌트 호출 간 재사용; `getHint` 종료 시 상한 초과분은 오래된 키부터 제거. */
+  private readonly hintValueCache = new Map<string, number>();
+  private readonly hintLeafScoreCache = new Map<string, number>();
+  private readonly hintSlidePenaltyCache = new Map<string, number>();
   constructor() {
     super({ key: SCENE_KEYS.GAME });
   }
@@ -105,6 +109,9 @@ export class GameScene extends Phaser.Scene {
     this.dragTraceGraphics.setDepth(25);
     this.registry.set(REG_UNDO_AVAILABLE, false);
     this.registry.set(REG_HINT_BUSY, false);
+    this.hintValueCache.clear();
+    this.hintLeafScoreCache.clear();
+    this.hintSlidePenaltyCache.clear();
     this.refreshBoard();
     this.setupInput();
     this.game.events.on("requestUndo", this.performUndo, this);
@@ -323,6 +330,9 @@ export class GameScene extends Phaser.Scene {
       beamWidthEarly: 8,
       depthLate: 12,
       beamWidthLate: 14,
+      valueCache: this.hintValueCache,
+      leafScoreCache: this.hintLeafScoreCache,
+      slidePenaltyCache: this.hintSlidePenaltyCache,
     };
   }
 

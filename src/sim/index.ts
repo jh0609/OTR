@@ -143,6 +143,9 @@ export { simulateOne, runMonteCarlo, emptyBoard, boardFrom } from "./simulate";
 
 export {
   getHint,
+  DEFAULT_HINT_MAX_VALUE_CACHE,
+  DEFAULT_HINT_MAX_LEAF_CACHE,
+  DEFAULT_HINT_MAX_SLIDE_CACHE,
   type HintSearchConfig,
   type HintResult,
   type HintDebug,
