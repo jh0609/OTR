@@ -18,14 +18,35 @@ import {
   simulateOne,
   TERMINAL_REASONS,
   getHint,
+  createHintSearchContext,
+  emptyBoard,
+  legalActions,
+  slide,
+  spawnRandom,
   type MonteCarloStats,
   type Policy,
   type TerminalReason,
+  type Direction,
+  type Board,
 } from "../src/sim/index.ts";
 
 const seed = Number(process.env.SIM_SEED ?? "42");
 /** 기본 5000 — 튜닝 스캔용. 긴 실행은 SIM_N=10000~20000 또는 그 이상. */
 const n = Number(process.env.SIM_N ?? "5000");
+/** If "1", skip Monte Carlo blocks and run trace only. */
+const traceOnly = process.env.SIM_TRACE_ONLY === "1";
+/** Session cache windows for hint policy (simulation only). */
+const simMaxValueCache = Number(process.env.SIM_HINT_MAX_VALUE_CACHE ?? "1000000");
+const simMaxLeafCache = Number(process.env.SIM_HINT_MAX_LEAF_CACHE ?? "600000");
+const simMaxSlideCache = Number(process.env.SIM_HINT_MAX_SLIDE_CACHE ?? "400000");
+/** Progress log interval during HINT Monte Carlo (episodes). */
+const simHintProgressEvery = Number(process.env.SIM_HINT_PROGRESS_EVERY ?? "0");
+/** Progress log interval during TRACE mode (steps). */
+const simTraceProgressEvery = Number(process.env.SIM_TRACE_PROGRESS_EVERY ?? "0");
+const simHintMaxMs = Number(process.env.SIM_HINT_MAX_MS ?? "0");
+const simHintMaxExpandedNodes = Number(process.env.SIM_HINT_MAX_EXPANDED_NODES ?? "0");
+const simHintMaxMsSweepRaw = process.env.SIM_HINT_MAX_MS_SWEEP ?? "";
+const simHintPrewarm = Number(process.env.SIM_HINT_PREWARM ?? "12");
 
 const HIST_FOCUS = [4, 5, 6, 7, 8, 9] as const;
 
@@ -235,10 +256,12 @@ function printMonteCarloStats(stats: MonteCarloStats, totalEpisodes: number): vo
   }
 }
 
-console.log(`Monte Carlo (episodes=${n}, seed=${seed}, mode=standard)\n`);
-console.log(
-  "  정책: selective late 3-ply + scoreBoardV3. 비교 — (1) C  (2) C+78  (3) C+78 + merge timing\n"
-);
+if (!traceOnly) {
+  console.log(`Monte Carlo (episodes=${n}, seed=${seed}, mode=standard)\n`);
+  console.log(
+    "  정책: selective late 3-ply + scoreBoardV3. 비교 — (1) C  (2) C+78  (3) C+78 + merge timing\n"
+  );
+}
 
 const policies: { name: string; label: string; p: Policy }[] = [
   { name: "(1) experiment C (best 페널티·rebuild)", label: "C", p: expectimaxPolicySelectiveLate3PlyExperimentC },
@@ -252,12 +275,14 @@ const policies: { name: string; label: string; p: Policy }[] = [
 
 const summaryRows: { label: string; stats: MonteCarloStats }[] = [];
 
-for (const { name, label, p } of policies) {
-  console.log(`  ${name}`);
-  const stats = runMonteCarlo(p, n, seed, "standard");
-  summaryRows.push({ label, stats });
-  printMonteCarloStats(stats, n);
-  console.log("");
+if (!traceOnly) {
+  for (const { name, label, p } of policies) {
+    console.log(`  ${name}`);
+    const stats = runMonteCarlo(p, n, seed, "standard");
+    summaryRows.push({ label, stats });
+    printMonteCarloStats(stats, n);
+    console.log("");
+  }
 }
 
 type LiteStats = {
@@ -266,6 +291,38 @@ type LiteStats = {
   avgSteps: number;
   terminalReasons: Record<TerminalReason, number>;
 };
+
+type HintRuntimeStats = {
+  calls: number;
+  expandedNodes: number;
+  cacheHits: number;
+  budgetCutoffCalls: number;
+  cutoffByTimeCalls: number;
+  cutoffByNodesCalls: number;
+  prewarmedNodes: number;
+  hintMsSamples: number[];
+  lastValueCacheSize: number;
+  lastLeafCacheSize: number;
+  lastSlideCacheSize: number;
+};
+
+let latestHintRuntimeStats: HintRuntimeStats | null = null;
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p)));
+  return sorted[idx] ?? 0;
+}
+
+function parseMsSweep(raw: string): number[] {
+  if (raw.trim() === "") return [];
+  const nums = raw
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .map((n) => Math.floor(n));
+  return [...new Set(nums)];
+}
 
 function emptyTerminalReasonsLite(): Record<TerminalReason, number> {
   const o = {} as Record<TerminalReason, number>;
@@ -282,12 +339,31 @@ function runMonteCarloFreshPolicy(
   let wins = 0;
   let stepsSum = 0;
   const reasons = emptyTerminalReasonsLite();
+  // Keep one policy instance so hint caches survive across episodes.
+  const p = makePolicy();
+  const progressEvery =
+    simHintProgressEvery > 0
+      ? Math.max(1, Math.floor(simHintProgressEvery))
+      : Math.max(1, Math.floor(episodes / 10));
   for (let i = 0; i < episodes; i++) {
-    const p = makePolicy();
     const r = simulateOne(p, rng, "standard");
     if (r.win) wins++;
     stepsSum += r.steps;
     reasons[r.terminalReason]++;
+    const done = i + 1;
+    if (done % progressEvery === 0 || done === episodes) {
+      const wr = ((wins / done) * 100).toFixed(2);
+      const avg = (stepsSum / done).toFixed(2);
+      const rs = latestHintRuntimeStats;
+      if (rs && rs.calls > 0) {
+        const hitRate = (rs.cacheHits / (rs.cacheHits + rs.expandedNodes)) * 100;
+        console.log(
+          `    [HINT progress] ${done}/${episodes} winRate=${wr}% avgSteps=${avg} hitRate=${Number.isFinite(hitRate) ? hitRate.toFixed(2) : "0.00"}% cache=${rs.lastValueCacheSize}/${rs.lastLeafCacheSize}/${rs.lastSlideCacheSize}`
+        );
+      } else {
+        console.log(`    [HINT progress] ${done}/${episodes} winRate=${wr}% avgSteps=${avg}`);
+      }
+    }
   }
   return {
     label: "HINT",
@@ -297,55 +373,227 @@ function runMonteCarloFreshPolicy(
   };
 }
 
-function makeHintPolicyFromGetHint(): Policy {
-  // 에피소드(판) 내부에서만 캐시를 유지해 "연속 힌트" 효과를 측정한다.
+function makeHintPolicyFromGetHint(overrideMaxMs?: number): Policy {
+  // Keep caches alive across episodes for session-level reuse.
   const valueCache = new Map<string, number>();
   const leafScoreCache = new Map<string, number>();
   const slidePenaltyCache = new Map<string, number>();
+  const preferredValueKeys = new Set<string>();
+  const searchContext = createHintSearchContext();
+  const runtimeStats: HintRuntimeStats = {
+    calls: 0,
+    expandedNodes: 0,
+    cacheHits: 0,
+    budgetCutoffCalls: 0,
+    cutoffByTimeCalls: 0,
+    cutoffByNodesCalls: 0,
+    prewarmedNodes: 0,
+    hintMsSamples: [],
+    lastValueCacheSize: 0,
+    lastLeafCacheSize: 0,
+    lastSlideCacheSize: 0,
+  };
+  latestHintRuntimeStats = runtimeStats;
   return (board, actions) => {
+    const t0 = Date.now();
     const hint = getHint(board, {
-      tuning: experimentCEndgameWith78MergeTiming,
+      tuning: {
+        ...experimentCEndgameWith78MergeTiming,
+        active7MergeBonus: 1500,
+        mergePotential7Weight: 700,
+        deltaMergePotential7Weight: 850,
+        mergeNow7Bonus: 3200,
+        deferMerge7Penalty: 500,
+        adjacent77Bonus: 1200,
+        separatedTwo7Penalty: 800,
+        // Stronger snake/rebuild bias once 8+7 endgame starts.
+        endgame78Weight: 320,
+        rebuildWeight: 240,
+        deltaRebuildPreferenceWeight: 260,
+      },
       lateThreshold: 7,
       depthEarly: 5,
       beamWidthEarly: 8,
-      depthLate: 9,
+      depthLate: 10,
       beamWidthLate: 14,
       valueCache,
       leafScoreCache,
       slidePenaltyCache,
+      sessionPreferredValueKeys: preferredValueKeys,
+      searchContext,
+      prewarmNodeExpansions: Math.max(0, Math.floor(simHintPrewarm)),
+      maxValueCacheSize: Math.max(1000, Math.floor(simMaxValueCache)),
+      maxLeafScoreCacheSize: Math.max(1000, Math.floor(simMaxLeafCache)),
+      maxSlidePenaltyCacheSize: Math.max(1000, Math.floor(simMaxSlideCache)),
+      maxMs: overrideMaxMs ?? (simHintMaxMs > 0 ? simHintMaxMs : undefined),
+      maxExpandedNodes:
+        simHintMaxExpandedNodes > 0 ? Math.floor(simHintMaxExpandedNodes) : undefined,
+      includeDebug: true,
     });
+    const elapsed = Date.now() - t0;
+    runtimeStats.calls++;
+    runtimeStats.hintMsSamples.push(elapsed);
+    runtimeStats.expandedNodes += hint.debug?.expandedNodes ?? 0;
+    runtimeStats.cacheHits += hint.debug?.cacheHits ?? 0;
+    runtimeStats.budgetCutoffCalls += hint.debug?.budgetCutoff ? 1 : 0;
+    runtimeStats.cutoffByTimeCalls += hint.debug?.cutoffByTime ? 1 : 0;
+    runtimeStats.cutoffByNodesCalls += hint.debug?.cutoffByNodes ? 1 : 0;
+    runtimeStats.prewarmedNodes += hint.debug?.prewarmedNodes ?? 0;
+    runtimeStats.lastValueCacheSize = valueCache.size;
+    runtimeStats.lastLeafCacheSize = leafScoreCache.size;
+    runtimeStats.lastSlideCacheSize = slidePenaltyCache.size;
     // 안전장치: 혹시라도 illegal이 나오면 actions[0]로 폴백.
     return actions.includes(hint.bestDirection) ? hint.bestDirection : actions[0]!;
   };
 }
 
-console.log("  (추가) hint(getHint) 정책 — 에피소드 내부 캐시 재사용\n");
-const hintLite = runMonteCarloFreshPolicy(makeHintPolicyFromGetHint, n, seed);
-console.log(`  HINT (getHint, tuned like GameScene)`);
-console.log(`    winRate: ${(hintLite.winRate * 100).toFixed(4)}%`);
-console.log(`    avgSteps: ${hintLite.avgSteps.toFixed(2)}`);
-console.log(`    terminalReasons: ${Object.entries(hintLite.terminalReasons).map(([k, v]) => `${k}=${v}`).join("  ")}`);
-console.log("");
+function runHintExperiment(label: string, makePolicy: () => Policy): void {
+  const hintLite = runMonteCarloFreshPolicy(makePolicy, n, seed);
+  console.log(`  ${label}`);
+  console.log(`    winRate: ${(hintLite.winRate * 100).toFixed(4)}%`);
+  console.log(`    avgSteps: ${hintLite.avgSteps.toFixed(2)}`);
+  console.log(`    terminalReasons: ${Object.entries(hintLite.terminalReasons).map(([k, v]) => `${k}=${v}`).join("  ")}`);
+  const rs = latestHintRuntimeStats;
+  if (rs && rs.calls > 0) {
+    const hitRate = (rs.cacheHits / (rs.cacheHits + rs.expandedNodes)) * 100;
+    const sortedMs = [...rs.hintMsSamples].sort((a, b) => a - b);
+    const p50 = percentile(sortedMs, 0.5);
+    const p95 = percentile(sortedMs, 0.95);
+    const p99 = percentile(sortedMs, 0.99);
+    const avgMs = sortedMs.reduce((acc, v) => acc + v, 0) / sortedMs.length;
+    console.log("    cache/runtime:");
+    console.log(
+      `      calls=${rs.calls} expandedNodes=${rs.expandedNodes} cacheHits=${rs.cacheHits} hitRate=${Number.isFinite(hitRate) ? hitRate.toFixed(2) : "0.00"}%`
+    );
+    console.log(
+      `      hintMs(avg/p50/p95/p99)=${avgMs.toFixed(2)}/${p50.toFixed(2)}/${p95.toFixed(2)}/${p99.toFixed(2)}`
+    );
+    console.log(
+      `      avgExpandedPerCall=${(rs.expandedNodes / rs.calls).toFixed(2)} avgHitsPerCall=${(rs.cacheHits / rs.calls).toFixed(2)}`
+    );
+    console.log(
+      `      cutoffCalls(all/time/nodes)=${rs.budgetCutoffCalls}/${rs.cutoffByTimeCalls}/${rs.cutoffByNodesCalls}`
+    );
+    console.log(`      prewarmedNodes(total/avg)=${rs.prewarmedNodes}/${(rs.prewarmedNodes / rs.calls).toFixed(2)}`);
+    console.log(
+      `      cacheSize(value/leaf/slide)=${rs.lastValueCacheSize}/${rs.lastLeafCacheSize}/${rs.lastSlideCacheSize}`
+    );
+  }
+  console.log("");
+}
 
-printStructureSummaryBlock(summaryRows, n);
-console.log(
-  "  참고: ever two 8s가 0을 벗어나면, 그때부터 승률·최종 강화 실험을 별도로 진행해도 된다.\n"
-);
+if (!traceOnly) {
+  console.log("  (추가) hint(getHint) 정책 — 에피소드 내부 캐시 재사용\n");
+  runHintExperiment("HINT (getHint, tuned like GameScene)", () => makeHintPolicyFromGetHint());
 
-console.log("단일 에피소드 예시 (C+78, seed=42):");
-const one = simulateOne(expectimaxPolicySelectiveLate3PlyExperimentCWith78, createRng(42), "standard");
-console.log(
-  `  win=${one.win} steps=${one.steps} terminalReason=${one.terminalReason} maxPeak=${one.maxLevelReached} finalMax=${one.finalMaxLevel}`
-);
-console.log(
-  `  final secondMax=${one.finalSecondMaxTile} peak2nd=${one.peakSecondMaxTile} top2Gap=${one.finalTop2Gap} final#8=${one.finalCountTilesEq8} final#≥7=${one.finalCountTilesGe7} peak#8max=${one.peakCount8}`
-);
-console.log(
-  `  ever: two7s=${one.everHadTwoSevensSimultaneous} one8+one7=${one.everHadOne8AndOne7Simultaneous} two8s=${one.everHadTwo8sSimultaneous} max8+sec6=${one.everHadMax8Second6} max8+sec7=${one.everHadMax8Second7}`
-);
-console.log(
-  `  peak count≥7=${one.peakCountGe7} peak top2sum=${one.peakTopTwoSum} final one8+one7=${one.finalHasOne8AndOne7}`
-);
-console.log(
-  `  mp7: peak=${one.peakMergePotential7.toFixed(3)} final=${one.finalMergePotential7.toFixed(3)} mp7+|max≥8=${one.everHadMp7PositiveWhileMaxGte8} 8+7&mp7+=${one.everHadMax8Second7WithMp7Positive} 8+7&mp7=0=${one.everHadMax8Second7WithMp7Zero}`
-);
+  const msSweep = parseMsSweep(simHintMaxMsSweepRaw);
+  if (msSweep.length > 0) {
+    console.log("  (추가) HINT maxMs sweep\n");
+    for (const ms of msSweep) {
+      runHintExperiment(`HINT sweep (maxMs=${ms})`, () => makeHintPolicyFromGetHint(ms));
+    }
+  }
+
+  printStructureSummaryBlock(summaryRows, n);
+  console.log(
+    "  참고: ever two 8s가 0을 벗어나면, 그때부터 승률·최종 강화 실험을 별도로 진행해도 된다.\n"
+  );
+
+  console.log("단일 에피소드 예시 (C+78, seed=42):");
+  const one = simulateOne(expectimaxPolicySelectiveLate3PlyExperimentCWith78, createRng(42), "standard");
+  console.log(
+    `  win=${one.win} steps=${one.steps} terminalReason=${one.terminalReason} maxPeak=${one.maxLevelReached} finalMax=${one.finalMaxLevel}`
+  );
+  console.log(
+    `  final secondMax=${one.finalSecondMaxTile} peak2nd=${one.peakSecondMaxTile} top2Gap=${one.finalTop2Gap} final#8=${one.finalCountTilesEq8} final#≥7=${one.finalCountTilesGe7} peak#8max=${one.peakCount8}`
+  );
+  console.log(
+    `  ever: two7s=${one.everHadTwoSevensSimultaneous} one8+one7=${one.everHadOne8AndOne7Simultaneous} two8s=${one.everHadTwo8sSimultaneous} max8+sec6=${one.everHadMax8Second6} max8+sec7=${one.everHadMax8Second7}`
+  );
+  console.log(
+    `  peak count≥7=${one.peakCountGe7} peak top2sum=${one.peakTopTwoSum} final one8+one7=${one.finalHasOne8AndOne7}`
+  );
+  console.log(
+    `  mp7: peak=${one.peakMergePotential7.toFixed(3)} final=${one.finalMergePotential7.toFixed(3)} mp7+|max≥8=${one.everHadMp7PositiveWhileMaxGte8} 8+7&mp7+=${one.everHadMax8Second7WithMp7Positive} 8+7&mp7=0=${one.everHadMax8Second7WithMp7Zero}`
+  );
+}
+
+function fmtBoard(board: Board): string {
+  const cell = (v: number) => String(v).padStart(2, " ");
+  return [
+    `${cell(board[0] ?? 0)} ${cell(board[1] ?? 0)} ${cell(board[2] ?? 0)}`,
+    `${cell(board[3] ?? 0)} ${cell(board[4] ?? 0)} ${cell(board[5] ?? 0)}`,
+    `${cell(board[6] ?? 0)} ${cell(board[7] ?? 0)} ${cell(board[8] ?? 0)}`,
+  ].join("\n");
+}
+
+function initialBoard(rng: () => number): Board {
+  let b = emptyBoard();
+  b = spawnRandom(b, rng);
+  b = spawnRandom(b, rng);
+  return b;
+}
+
+function simulateOneWithTrace(policy: Policy, rng: () => number, maxSteps: number = Number.POSITIVE_INFINITY): void {
+  let board = initialBoard(rng);
+  console.log("\n[TRACE] initial");
+  console.log(fmtBoard(board));
+  const progressEvery = simTraceProgressEvery > 0 ? Math.max(1, Math.floor(simTraceProgressEvery)) : 0;
+
+  for (let step = 1; step <= maxSteps; step++) {
+    const actions = legalActions(board);
+    if (actions.length === 0) {
+      console.log(`\n[TRACE] terminal: no_legal_moves (steps=${step - 1})`);
+      return;
+    }
+    const dir: Direction = policy(board, actions);
+    const { next, moved, win } = slide(board, dir);
+    console.log(`\n[TRACE] step=${step} dir=${dir} moved=${moved} win=${win}`);
+    console.log(fmtBoard(next));
+    if (win) {
+      console.log(`\n[TRACE] terminal: win (steps=${step})`);
+      return;
+    }
+    if (!moved) {
+      console.log(`\n[TRACE] terminal: policy_illegal_move (steps=${step})`);
+      return;
+    }
+    board = spawnRandom(next, rng);
+    console.log(`[TRACE] after spawn`);
+    console.log(fmtBoard(board));
+    if (progressEvery > 0 && step % progressEvery === 0) {
+      const rs = latestHintRuntimeStats;
+      if (rs && rs.calls > 0) {
+        const hitRate = (rs.cacheHits / (rs.cacheHits + rs.expandedNodes)) * 100;
+        console.log(
+          `[TRACE progress] step=${step} calls=${rs.calls} hitRate=${Number.isFinite(hitRate) ? hitRate.toFixed(2) : "0.00"}% cache=${rs.lastValueCacheSize}/${rs.lastLeafCacheSize}/${rs.lastSlideCacheSize}`
+        );
+      } else {
+        console.log(`[TRACE progress] step=${step}`);
+      }
+    }
+  }
+  console.log(`\n[TRACE] terminal: max_steps (steps=${maxSteps})`);
+}
+
+if (process.env.SIM_TRACE === "1") {
+  const traceSeed = Number(process.env.SIM_TRACE_SEED ?? String(seed));
+  const traceRng = createRng(traceSeed);
+  console.log(`\nTrace episode (seed=${traceSeed}) using HINT policy\n`);
+  const rawMax = process.env.SIM_TRACE_MAX_STEPS;
+  const maxSteps =
+    rawMax === undefined || rawMax.trim() === ""
+      ? Number.POSITIVE_INFINITY
+      : Math.max(1, Number(rawMax));
+  simulateOneWithTrace(makeHintPolicyFromGetHint(), traceRng, maxSteps);
+  const rs = latestHintRuntimeStats;
+  if (rs && rs.calls > 0) {
+    const hitRate = (rs.cacheHits / (rs.cacheHits + rs.expandedNodes)) * 100;
+    console.log(
+      `\n[TRACE] cache/runtime calls=${rs.calls} expanded=${rs.expandedNodes} hits=${rs.cacheHits} hitRate=${Number.isFinite(hitRate) ? hitRate.toFixed(2) : "0.00"}%`
+    );
+    console.log(
+      `[TRACE] cacheSize(value/leaf/slide)=${rs.lastValueCacheSize}/${rs.lastLeafCacheSize}/${rs.lastSlideCacheSize}`
+    );
+  }
+}

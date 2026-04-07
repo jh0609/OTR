@@ -143,10 +143,16 @@ export { simulateOne, runMonteCarlo, emptyBoard, boardFrom } from "./simulate";
 
 export {
   getHint,
+  createHintSearchContext,
+  evictColdSubtrees,
+  reRootHintSearchContext,
   DEFAULT_HINT_MAX_VALUE_CACHE,
   DEFAULT_HINT_MAX_LEAF_CACHE,
   DEFAULT_HINT_MAX_SLIDE_CACHE,
   type HintSearchConfig,
   type HintResult,
   type HintDebug,
+  type HintSearchContext,
+  type HintSearchNode,
+  type HintNodeType,
 } from "./hintSearch";

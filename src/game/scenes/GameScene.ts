@@ -3,7 +3,12 @@ import type { Board } from "../core/types";
 import { SCENE_KEYS } from "../constants";
 import { GAME_WIDTH } from "../config";
 import { step as coreStep, isGameOver, hasWon, getEmptyCount } from "../core";
-import { getHint, experimentCEndgameWith78MergeTiming, type HintSearchConfig } from "../../sim";
+import {
+  getHint,
+  createHintSearchContext,
+  experimentCEndgameWith78MergeTiming,
+  type HintSearchConfig,
+} from "../../sim";
 import { gameBoardToSim, simDirectionToGame } from "../hintBridge";
 import { copyBoard } from "../core/board";
 import { setBestScore } from "../storage";
@@ -82,6 +87,8 @@ export class GameScene extends Phaser.Scene {
   private readonly hintValueCache = new Map<string, number>();
   private readonly hintLeafScoreCache = new Map<string, number>();
   private readonly hintSlidePenaltyCache = new Map<string, number>();
+  private readonly hintPreferredValueKeys = new Set<string>();
+  private readonly hintSearchContext = createHintSearchContext();
   constructor() {
     super({ key: SCENE_KEYS.GAME });
   }
@@ -114,6 +121,11 @@ export class GameScene extends Phaser.Scene {
     this.hintValueCache.clear();
     this.hintLeafScoreCache.clear();
     this.hintSlidePenaltyCache.clear();
+    this.hintPreferredValueKeys.clear();
+    this.hintSearchContext.nodes.clear();
+    this.hintSearchContext.tick = 0;
+    this.hintSearchContext.generation = 0;
+    this.hintSearchContext.rootKey = undefined;
     this.refreshBoard();
     this.setupInput();
     this.game.events.on("requestUndo", this.performUndo, this);
@@ -346,15 +358,32 @@ export class GameScene extends Phaser.Scene {
 
   private hintSearchOptions(): HintSearchConfig {
     return {
-      tuning: experimentCEndgameWith78MergeTiming,
+      tuning: {
+        ...experimentCEndgameWith78MergeTiming,
+        active7MergeBonus: 1500,
+        mergePotential7Weight: 700,
+        deltaMergePotential7Weight: 850,
+        mergeNow7Bonus: 3200,
+        deferMerge7Penalty: 500,
+        adjacent77Bonus: 1200,
+        separatedTwo7Penalty: 800,
+        endgame78Weight: 320,
+        rebuildWeight: 240,
+        deltaRebuildPreferenceWeight: 260,
+      },
       lateThreshold: 7,
       depthEarly: 5,
       beamWidthEarly: 8,
-      depthLate: 9,
+      depthLate: 10,
       beamWidthLate: 14,
+      maxMs: 35,
+      maxExpandedNodes: 90_000,
       valueCache: this.hintValueCache,
       leafScoreCache: this.hintLeafScoreCache,
       slidePenaltyCache: this.hintSlidePenaltyCache,
+      sessionPreferredValueKeys: this.hintPreferredValueKeys,
+      searchContext: this.hintSearchContext,
+      prewarmNodeExpansions: 12,
     };
   }
 
