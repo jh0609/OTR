@@ -32,6 +32,8 @@ export type EndgameTuningConfig = {
   rebuildDropDelta?: number;
 
   emptyZeroPenalty?: number;
+  /** Phase3에서 빈 칸 1개당 추가 보너스 (고레벨 구간 유동성 확보). */
+  highLevelEmptyCellReward?: number;
   movedOffAnchorPenalty?: number;
 
   /** endgame7To8Potential 전체에 곱함 */
@@ -109,6 +111,7 @@ const BASE: EndgameTuning = {
   rebuildDropDelta: 2,
 
   emptyZeroPenalty: 800,
+  highLevelEmptyCellReward: 0,
   movedOffAnchorPenalty: 2000,
 
   endgame78Weight: 0,
@@ -177,6 +180,7 @@ export const experimentCEndgameTuning: EndgameTuning = mergeEndgameTuning({
   rebuildWeight: 180,
   rebuildDropPenalty: 250,
   emptyZeroPenalty: 600,
+  highLevelEmptyCellReward: 0,
   trappedWeight: 100,
 });
 
@@ -185,6 +189,7 @@ export const experimentCEndgameWith78Tuning: EndgameTuning = mergeEndgameTuning(
   rebuildWeight: 180,
   rebuildDropPenalty: 250,
   emptyZeroPenalty: 600,
+  highLevelEmptyCellReward: 0,
   trappedWeight: 100,
   endgame78Weight: 220,
   max8Second7Bonus: 4000,
@@ -202,6 +207,7 @@ export const experimentCEndgameWith78MergeTiming: EndgameTuning = mergeEndgameTu
   rebuildWeight: 180,
   rebuildDropPenalty: 250,
   emptyZeroPenalty: 600,
+  highLevelEmptyCellReward: 0,
   trappedWeight: 100,
   endgame78Weight: 220,
   max8Second7Bonus: 4000,
@@ -212,18 +218,18 @@ export const experimentCEndgameWith78MergeTiming: EndgameTuning = mergeEndgameTu
   deltaMergePotential7Weight: 600,
   deltaRebuildPreferenceWeight: 120,
   deltaTrappedPenaltyWeight: 100,
-  mergeNow7Bonus: 2500,
-  mergeNow8Bonus: 12000,
-  deferMerge7Penalty: 300,
-  deferMerge8Penalty: 1200,
+  mergeNow7Bonus: 4200,
+  mergeNow8Bonus: 22000,
+  deferMerge7Penalty: 900,
+  deferMerge8Penalty: 2800,
   adjacent77Bonus: 0,
   separatedTwo7Penalty: 0,
   two7DistancePenaltyWeight: 0,
   highLevelNoMergePenalty: 0,
   highLevelNoMergePerTilePenalty: 0,
   highLevelNoMergeLowEmptyPenalty: 0,
-  deltaImmediateMerge7Gain: 1200,
-  deltaImmediateMerge7Loss: 1500,
-  deltaImmediateMerge8Gain: 5000,
-  deltaImmediateMerge8Loss: 7000,
+  deltaImmediateMerge7Gain: 2200,
+  deltaImmediateMerge7Loss: 3000,
+  deltaImmediateMerge8Gain: 9000,
+  deltaImmediateMerge8Loss: 12000,
 });

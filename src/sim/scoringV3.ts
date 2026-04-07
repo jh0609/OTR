@@ -115,6 +115,7 @@ function scorePhase3(board: Board, t: EndgameTuning): number {
 
   let score =
     70 * ec +
+    t.highLevelEmptyCellReward * ec +
     35 * mergePairs +
     60 * anchorOK +
     8 * mono -
