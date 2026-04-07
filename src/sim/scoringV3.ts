@@ -24,6 +24,28 @@ import { mergeEndgameTuning } from "./endgameTuning";
 
 const ANCHOR = 8;
 
+function minPairManhattanDistanceAtLevel(board: Board, level: number): number {
+  const idxs: number[] = [];
+  for (let i = 0; i < board.length; i++) {
+    if ((board[i] ?? 0) === level) idxs.push(i);
+  }
+  if (idxs.length < 2) return Number.POSITIVE_INFINITY;
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < idxs.length; i++) {
+    const a = idxs[i]!;
+    const ar = Math.floor(a / 3);
+    const ac = a % 3;
+    for (let j = i + 1; j < idxs.length; j++) {
+      const b = idxs[j]!;
+      const br = Math.floor(b / 3);
+      const bc = b % 3;
+      const dist = Math.abs(ar - br) + Math.abs(ac - bc);
+      if (dist < best) best = dist;
+    }
+  }
+  return best;
+}
+
 function survivalCore(board: Board): number {
   const ec = emptyCount(board);
   const mp = countMergePairs(board);
@@ -132,6 +154,17 @@ function scorePhase3(board: Board, t: EndgameTuning): number {
   if (count8 >= 2 && !canMerge8Now) score -= t.deferMerge8Penalty;
   if (count7 >= 2 && hasAdj77) score += t.adjacent77Bonus;
   if (count7 >= 2 && !hasAdj77) score -= t.separatedTwo7Penalty;
+  if (count7 >= 2) {
+    const minDist77 = minPairManhattanDistanceAtLevel(board, 7);
+    if (Number.isFinite(minDist77) && minDist77 > 1) {
+      score -= t.two7DistancePenaltyWeight * (minDist77 - 1);
+    }
+  }
+  if (countGE7 >= 3 && !canMerge7Now && !canMerge8Now) {
+    score -= t.highLevelNoMergePenalty;
+    score -= t.highLevelNoMergePerTilePenalty * Math.max(0, countGE7 - 2);
+    score -= t.highLevelNoMergeLowEmptyPenalty * Math.max(0, 2 - ec);
+  }
 
   const ultraEndgame =
     (mx >= 8 && sm >= 7) || (count7 >= 2 && mx >= 7);

@@ -406,6 +406,10 @@ function makeHintPolicyFromGetHint(overrideMaxMs?: number): Policy {
         deferMerge7Penalty: 500,
         adjacent77Bonus: 1200,
         separatedTwo7Penalty: 800,
+        two7DistancePenaltyWeight: 650,
+        highLevelNoMergePenalty: 1400,
+        highLevelNoMergePerTilePenalty: 550,
+        highLevelNoMergeLowEmptyPenalty: 800,
         // Stronger snake/rebuild bias once 8+7 endgame starts.
         endgame78Weight: 320,
         rebuildWeight: 240,

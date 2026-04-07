@@ -68,6 +68,14 @@ export type EndgameTuningConfig = {
   adjacent77Bonus?: number;
   /** count(7)≥2 && 비인접(7,7)일 때 추가 패널티 */
   separatedTwo7Penalty?: number;
+  /** count(7)≥2일 때 7-7 최소 맨해튼 거리 기반 추가 패널티 가중치 */
+  two7DistancePenaltyWeight?: number;
+  /** 고레벨 과밀(>=7 다수) + 즉시 머지 불가일 때 기본 패널티 */
+  highLevelNoMergePenalty?: number;
+  /** 고레벨 과밀 시 count(>=7)-2 에 비례한 추가 패널티 */
+  highLevelNoMergePerTilePenalty?: number;
+  /** 고레벨 과밀 + 빈칸 부족 시 추가 패널티 */
+  highLevelNoMergeLowEmptyPenalty?: number;
   /** 슬라이드로 즉시 머지 가능 상태가 열리거나 닫힐 때 Q 델타 */
   deltaImmediateMerge7Gain?: number;
   deltaImmediateMerge7Loss?: number;
@@ -126,6 +134,10 @@ const BASE: EndgameTuning = {
   deferMerge8Penalty: 0,
   adjacent77Bonus: 0,
   separatedTwo7Penalty: 0,
+  two7DistancePenaltyWeight: 0,
+  highLevelNoMergePenalty: 0,
+  highLevelNoMergePerTilePenalty: 0,
+  highLevelNoMergeLowEmptyPenalty: 0,
   deltaImmediateMerge7Gain: 0,
   deltaImmediateMerge7Loss: 0,
   deltaImmediateMerge8Gain: 0,
@@ -206,6 +218,10 @@ export const experimentCEndgameWith78MergeTiming: EndgameTuning = mergeEndgameTu
   deferMerge8Penalty: 1200,
   adjacent77Bonus: 0,
   separatedTwo7Penalty: 0,
+  two7DistancePenaltyWeight: 0,
+  highLevelNoMergePenalty: 0,
+  highLevelNoMergePerTilePenalty: 0,
+  highLevelNoMergeLowEmptyPenalty: 0,
   deltaImmediateMerge7Gain: 1200,
   deltaImmediateMerge7Loss: 1500,
   deltaImmediateMerge8Gain: 5000,
