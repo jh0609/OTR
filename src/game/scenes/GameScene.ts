@@ -347,7 +347,7 @@ export class GameScene extends Phaser.Scene {
   private hintSearchOptions(): HintSearchConfig {
     return {
       tuning: experimentCEndgameWith78MergeTiming,
-      lateThreshold: 8,
+      lateThreshold: 7,
       depthEarly: 5,
       beamWidthEarly: 8,
       depthLate: 9,

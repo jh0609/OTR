@@ -305,7 +305,7 @@ function makeHintPolicyFromGetHint(): Policy {
   return (board, actions) => {
     const hint = getHint(board, {
       tuning: experimentCEndgameWith78MergeTiming,
-      lateThreshold: 8,
+      lateThreshold: 7,
       depthEarly: 5,
       beamWidthEarly: 8,
       depthLate: 9,
