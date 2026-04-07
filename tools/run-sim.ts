@@ -14,10 +14,13 @@ import {
   expectimaxPolicySelectiveLate3PlyExperimentC,
   expectimaxPolicySelectiveLate3PlyExperimentCWith78,
   expectimaxPolicySelectiveLate3PlyExperimentCWith78MergeTiming,
+  experimentCEndgameWith78MergeTiming,
   simulateOne,
   TERMINAL_REASONS,
+  getHint,
   type MonteCarloStats,
   type Policy,
+  type TerminalReason,
 } from "../src/sim/index.ts";
 
 const seed = Number(process.env.SIM_SEED ?? "42");
@@ -256,6 +259,73 @@ for (const { name, label, p } of policies) {
   printMonteCarloStats(stats, n);
   console.log("");
 }
+
+type LiteStats = {
+  label: string;
+  winRate: number;
+  avgSteps: number;
+  terminalReasons: Record<TerminalReason, number>;
+};
+
+function emptyTerminalReasonsLite(): Record<TerminalReason, number> {
+  const o = {} as Record<TerminalReason, number>;
+  for (const k of TERMINAL_REASONS) o[k] = 0;
+  return o;
+}
+
+function runMonteCarloFreshPolicy(
+  makePolicy: () => Policy,
+  episodes: number,
+  seed0: number
+): LiteStats {
+  const rng = createRng(seed0);
+  let wins = 0;
+  let stepsSum = 0;
+  const reasons = emptyTerminalReasonsLite();
+  for (let i = 0; i < episodes; i++) {
+    const p = makePolicy();
+    const r = simulateOne(p, rng, "standard");
+    if (r.win) wins++;
+    stepsSum += r.steps;
+    reasons[r.terminalReason]++;
+  }
+  return {
+    label: "HINT",
+    winRate: episodes > 0 ? wins / episodes : 0,
+    avgSteps: episodes > 0 ? stepsSum / episodes : 0,
+    terminalReasons: reasons,
+  };
+}
+
+function makeHintPolicyFromGetHint(): Policy {
+  // 에피소드(판) 내부에서만 캐시를 유지해 "연속 힌트" 효과를 측정한다.
+  const valueCache = new Map<string, number>();
+  const leafScoreCache = new Map<string, number>();
+  const slidePenaltyCache = new Map<string, number>();
+  return (board, actions) => {
+    const hint = getHint(board, {
+      tuning: experimentCEndgameWith78MergeTiming,
+      lateThreshold: 8,
+      depthEarly: 5,
+      beamWidthEarly: 8,
+      depthLate: 9,
+      beamWidthLate: 14,
+      valueCache,
+      leafScoreCache,
+      slidePenaltyCache,
+    });
+    // 안전장치: 혹시라도 illegal이 나오면 actions[0]로 폴백.
+    return actions.includes(hint.bestDirection) ? hint.bestDirection : actions[0]!;
+  };
+}
+
+console.log("  (추가) hint(getHint) 정책 — 에피소드 내부 캐시 재사용\n");
+const hintLite = runMonteCarloFreshPolicy(makeHintPolicyFromGetHint, n, seed);
+console.log(`  HINT (getHint, tuned like GameScene)`);
+console.log(`    winRate: ${(hintLite.winRate * 100).toFixed(4)}%`);
+console.log(`    avgSteps: ${hintLite.avgSteps.toFixed(2)}`);
+console.log(`    terminalReasons: ${Object.entries(hintLite.terminalReasons).map(([k, v]) => `${k}=${v}`).join("  ")}`);
+console.log("");
 
 printStructureSummaryBlock(summaryRows, n);
 console.log(
