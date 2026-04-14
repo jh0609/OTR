@@ -378,6 +378,9 @@ export class GameScene extends Phaser.Scene {
         highLevelNoMergePerTilePenalty: 900,
         highLevelNoMergeLowEmptyPenalty: 1300,
         highLevelEmptyCellReward: 160,
+        forcedLossPenalty: 1_000_000,
+        deadSeverityWeight: 2500,
+        blockedLevelPenalty: 1000,
         endgame78Weight: 320,
         rebuildWeight: 240,
         deltaRebuildPreferenceWeight: 260,
@@ -395,6 +398,7 @@ export class GameScene extends Phaser.Scene {
       sessionPreferredValueKeys: this.hintPreferredValueKeys,
       searchContext: this.hintSearchContext,
       prewarmNodeExpansions: 12,
+      enableDeadStatePrune: true,
     };
   }
 

@@ -16,6 +16,7 @@ import {
   hasAdjacentPair,
   hasImmediateMerge,
   mergePotentialAtLevel,
+  analyzeLateDeadState,
 } from "./boardStats";
 import { slide } from "./slide";
 import { legalActions } from "./legal";
@@ -49,6 +50,15 @@ type MutableEpisodeStats = {
   everImm8: boolean;
   everAdj77NoImm7: boolean;
   everAdj88NoImm8: boolean;
+  everForcedLoss: boolean;
+  everBlocked4: boolean;
+  everBlocked5: boolean;
+  everBlocked6: boolean;
+  everBlocked7: boolean;
+  peakDeadSeverity: number;
+  peakBlockedLevelsCount: number;
+  everOne8One7WithForcedLoss: boolean;
+  everTwo7WithForcedLoss: boolean;
 };
 
 function makeStats(): MutableEpisodeStats {
@@ -77,6 +87,15 @@ function makeStats(): MutableEpisodeStats {
     everImm8: false,
     everAdj77NoImm7: false,
     everAdj88NoImm8: false,
+    everForcedLoss: false,
+    everBlocked4: false,
+    everBlocked5: false,
+    everBlocked6: false,
+    everBlocked7: false,
+    peakDeadSeverity: 0,
+    peakBlockedLevelsCount: 0,
+    everOne8One7WithForcedLoss: false,
+    everTwo7WithForcedLoss: false,
   };
 }
 
@@ -120,6 +139,19 @@ function observeBoard(board: Board, s: MutableEpisodeStats): void {
   if (hasImmediateMerge(board, 8)) s.everImm8 = true;
   if (hasAdjacentPair(board, 7) && !hasImmediateMerge(board, 7)) s.everAdj77NoImm7 = true;
   if (hasAdjacentPair(board, 8) && !hasImmediateMerge(board, 8)) s.everAdj88NoImm8 = true;
+
+  const dead = analyzeLateDeadState(board);
+  if (dead.forcedLoss) s.everForcedLoss = true;
+  if (dead.blockedLevels.includes(4)) s.everBlocked4 = true;
+  if (dead.blockedLevels.includes(5)) s.everBlocked5 = true;
+  if (dead.blockedLevels.includes(6)) s.everBlocked6 = true;
+  if (dead.blockedLevels.includes(7)) s.everBlocked7 = true;
+  if (dead.severity > s.peakDeadSeverity) s.peakDeadSeverity = dead.severity;
+  if (dead.blockedLevels.length > s.peakBlockedLevelsCount) {
+    s.peakBlockedLevelsCount = dead.blockedLevels.length;
+  }
+  if (dead.forcedLoss && hasSimultaneousOne8AndOne7(board)) s.everOne8One7WithForcedLoss = true;
+  if (dead.forcedLoss && hasTwoOrMoreTilesEqual(board, 7)) s.everTwo7WithForcedLoss = true;
 }
 
 function finalize(
@@ -131,6 +163,7 @@ function finalize(
 ): EpisodeResult {
   const c7f = countTilesEqual(terminalBoard, 7);
   const c8f = countTilesEqual(terminalBoard, 8);
+  const finalDead = analyzeLateDeadState(terminalBoard);
   return {
     win,
     steps,
@@ -174,6 +207,18 @@ function finalize(
     everHadAdjacent88ButNoImmediateMerge8: s.everAdj88NoImm8,
     finalCanMerge7Now: hasImmediateMerge(terminalBoard, 7),
     finalCanMerge8Now: hasImmediateMerge(terminalBoard, 8),
+    everForcedLoss: s.everForcedLoss,
+    everBlockedRequiredMerge4: s.everBlocked4,
+    everBlockedRequiredMerge5: s.everBlocked5,
+    everBlockedRequiredMerge6: s.everBlocked6,
+    everBlockedRequiredMerge7: s.everBlocked7,
+    peakDeadSeverity: s.peakDeadSeverity,
+    peakBlockedLevelsCount: s.peakBlockedLevelsCount,
+    finalForcedLoss: finalDead.forcedLoss,
+    finalDeadSeverity: finalDead.severity,
+    finalBlockedLevelsCount: finalDead.blockedLevels.length,
+    everOne8One7WithForcedLoss: s.everOne8One7WithForcedLoss,
+    everTwo7WithForcedLoss: s.everTwo7WithForcedLoss,
   };
 }
 
@@ -288,6 +333,18 @@ export function runMonteCarlo(
   let episodesEverAdjacent88NoImmediate8 = 0;
   let episodesFinalCanMerge7Now = 0;
   let episodesFinalCanMerge8Now = 0;
+  let episodesEverForcedLoss = 0;
+  let episodesBlockedRequiredMerge4 = 0;
+  let episodesBlockedRequiredMerge5 = 0;
+  let episodesBlockedRequiredMerge6 = 0;
+  let episodesBlockedRequiredMerge7 = 0;
+  let episodesFinalForcedLoss = 0;
+  let sumPeakDeadSeverity = 0;
+  let sumFinalDeadSeverity = 0;
+  let sumPeakBlockedLevelsCount = 0;
+  let sumFinalBlockedLevelsCount = 0;
+  let episodesOne8One7WithForcedLoss = 0;
+  let episodesTwo7WithForcedLoss = 0;
   const terminalReasons = emptyTerminalReasons();
 
   for (let i = 0; i < n; i++) {
@@ -333,6 +390,18 @@ export function runMonteCarlo(
     if (r.everHadAdjacent88ButNoImmediateMerge8) episodesEverAdjacent88NoImmediate8++;
     if (r.finalCanMerge7Now) episodesFinalCanMerge7Now++;
     if (r.finalCanMerge8Now) episodesFinalCanMerge8Now++;
+    if (r.everForcedLoss) episodesEverForcedLoss++;
+    if (r.everBlockedRequiredMerge4) episodesBlockedRequiredMerge4++;
+    if (r.everBlockedRequiredMerge5) episodesBlockedRequiredMerge5++;
+    if (r.everBlockedRequiredMerge6) episodesBlockedRequiredMerge6++;
+    if (r.everBlockedRequiredMerge7) episodesBlockedRequiredMerge7++;
+    if (r.finalForcedLoss) episodesFinalForcedLoss++;
+    sumPeakDeadSeverity += r.peakDeadSeverity;
+    sumFinalDeadSeverity += r.finalDeadSeverity;
+    sumPeakBlockedLevelsCount += r.peakBlockedLevelsCount;
+    sumFinalBlockedLevelsCount += r.finalBlockedLevelsCount;
+    if (r.everOne8One7WithForcedLoss) episodesOne8One7WithForcedLoss++;
+    if (r.everTwo7WithForcedLoss) episodesTwo7WithForcedLoss++;
     terminalReasons[r.terminalReason]++;
   }
 
@@ -377,6 +446,18 @@ export function runMonteCarlo(
     episodesEverAdjacent88NoImmediate8,
     episodesFinalCanMerge7Now,
     episodesFinalCanMerge8Now,
+    episodesEverForcedLoss,
+    episodesBlockedRequiredMerge4,
+    episodesBlockedRequiredMerge5,
+    episodesBlockedRequiredMerge6,
+    episodesBlockedRequiredMerge7,
+    episodesFinalForcedLoss,
+    meanPeakDeadSeverity: n > 0 ? sumPeakDeadSeverity / n : 0,
+    meanFinalDeadSeverity: n > 0 ? sumFinalDeadSeverity / n : 0,
+    meanPeakBlockedLevelsCount: n > 0 ? sumPeakBlockedLevelsCount / n : 0,
+    meanFinalBlockedLevelsCount: n > 0 ? sumFinalBlockedLevelsCount / n : 0,
+    episodesOne8One7WithForcedLoss,
+    episodesTwo7WithForcedLoss,
   };
 }
 

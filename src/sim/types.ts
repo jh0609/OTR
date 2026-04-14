@@ -85,6 +85,18 @@ export type EpisodeResult = {
   readonly everHadAdjacent88ButNoImmediateMerge8: boolean;
   readonly finalCanMerge7Now: boolean;
   readonly finalCanMerge8Now: boolean;
+  readonly everForcedLoss: boolean;
+  readonly everBlockedRequiredMerge4: boolean;
+  readonly everBlockedRequiredMerge5: boolean;
+  readonly everBlockedRequiredMerge6: boolean;
+  readonly everBlockedRequiredMerge7: boolean;
+  readonly peakDeadSeverity: number;
+  readonly peakBlockedLevelsCount: number;
+  readonly finalForcedLoss: boolean;
+  readonly finalDeadSeverity: number;
+  readonly finalBlockedLevelsCount: number;
+  readonly everOne8One7WithForcedLoss: boolean;
+  readonly everTwo7WithForcedLoss: boolean;
 };
 
 export type MonteCarloStats = {
@@ -136,4 +148,16 @@ export type MonteCarloStats = {
   readonly episodesEverAdjacent88NoImmediate8: number;
   readonly episodesFinalCanMerge7Now: number;
   readonly episodesFinalCanMerge8Now: number;
+  readonly episodesEverForcedLoss: number;
+  readonly episodesBlockedRequiredMerge4: number;
+  readonly episodesBlockedRequiredMerge5: number;
+  readonly episodesBlockedRequiredMerge6: number;
+  readonly episodesBlockedRequiredMerge7: number;
+  readonly episodesFinalForcedLoss: number;
+  readonly meanPeakDeadSeverity: number;
+  readonly meanFinalDeadSeverity: number;
+  readonly meanPeakBlockedLevelsCount: number;
+  readonly meanFinalBlockedLevelsCount: number;
+  readonly episodesOne8One7WithForcedLoss: number;
+  readonly episodesTwo7WithForcedLoss: number;
 };

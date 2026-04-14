@@ -137,6 +137,12 @@ export {
   immediateMergeCount,
   countMergesAtLevelInSlide,
   mergeTimingSlideDelta,
+  requiredMergesToWin,
+  isRequiredMergeBlocked,
+  analyzeLateDeadState,
+  type MergeRequirement,
+  type DeadStateReason,
+  type DeadStateReport,
 } from "./boardStats";
 
 export { simulateOne, runMonteCarlo, emptyBoard, boardFrom } from "./simulate";

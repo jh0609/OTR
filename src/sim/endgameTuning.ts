@@ -78,6 +78,12 @@ export type EndgameTuningConfig = {
   highLevelNoMergePerTilePenalty?: number;
   /** 고레벨 과밀 + 빈칸 부족 시 추가 패널티 */
   highLevelNoMergeLowEmptyPenalty?: number;
+  /** dead-state 강제 패배 판정 시 감점 */
+  forcedLossPenalty?: number;
+  /** dead-state 심각도(0~1)에 곱해 감점 */
+  deadSeverityWeight?: number;
+  /** blocked required merge 레벨 수에 비례 감점 */
+  blockedLevelPenalty?: number;
   /** 슬라이드로 즉시 머지 가능 상태가 열리거나 닫힐 때 Q 델타 */
   deltaImmediateMerge7Gain?: number;
   deltaImmediateMerge7Loss?: number;
@@ -141,6 +147,9 @@ const BASE: EndgameTuning = {
   highLevelNoMergePenalty: 0,
   highLevelNoMergePerTilePenalty: 0,
   highLevelNoMergeLowEmptyPenalty: 0,
+  forcedLossPenalty: 1_000_000,
+  deadSeverityWeight: 2500,
+  blockedLevelPenalty: 1000,
   deltaImmediateMerge7Gain: 0,
   deltaImmediateMerge7Loss: 0,
   deltaImmediateMerge8Gain: 0,

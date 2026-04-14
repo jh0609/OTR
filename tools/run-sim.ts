@@ -130,6 +130,18 @@ function printStructureSummaryBlock(
   line("ever adj8+8 no imm8", (s) => `${s.episodesEverAdjacent88NoImmediate8} (${pct(s.episodesEverAdjacent88NoImmediate8, totalEpisodes)}%)`);
   line("final canMerge7Now", (s) => `${s.episodesFinalCanMerge7Now} (${pct(s.episodesFinalCanMerge7Now, totalEpisodes)}%)`);
   line("final canMerge8Now", (s) => `${s.episodesFinalCanMerge8Now} (${pct(s.episodesFinalCanMerge8Now, totalEpisodes)}%)`);
+  line("ever forcedLoss flagged", (s) => `${s.episodesEverForcedLoss} (${pct(s.episodesEverForcedLoss, totalEpisodes)}%)`);
+  line("blocked req merge L4", (s) => `${s.episodesBlockedRequiredMerge4} (${pct(s.episodesBlockedRequiredMerge4, totalEpisodes)}%)`);
+  line("blocked req merge L5", (s) => `${s.episodesBlockedRequiredMerge5} (${pct(s.episodesBlockedRequiredMerge5, totalEpisodes)}%)`);
+  line("blocked req merge L6", (s) => `${s.episodesBlockedRequiredMerge6} (${pct(s.episodesBlockedRequiredMerge6, totalEpisodes)}%)`);
+  line("blocked req merge L7", (s) => `${s.episodesBlockedRequiredMerge7} (${pct(s.episodesBlockedRequiredMerge7, totalEpisodes)}%)`);
+  line("final forcedLoss", (s) => `${s.episodesFinalForcedLoss} (${pct(s.episodesFinalForcedLoss, totalEpisodes)}%)`);
+  line("mean peak dead severity", (s) => s.meanPeakDeadSeverity.toFixed(3));
+  line("mean final dead severity", (s) => s.meanFinalDeadSeverity.toFixed(3));
+  line("mean peak blockedLevels", (s) => s.meanPeakBlockedLevelsCount.toFixed(3));
+  line("mean final blockedLevels", (s) => s.meanFinalBlockedLevelsCount.toFixed(3));
+  line("one8+one7 + forcedLoss", (s) => `${s.episodesOne8One7WithForcedLoss} (${pct(s.episodesOne8One7WithForcedLoss, totalEpisodes)}%)`);
+  line("two7s + forcedLoss", (s) => `${s.episodesTwo7WithForcedLoss} (${pct(s.episodesTwo7WithForcedLoss, totalEpisodes)}%)`);
   line("ever max8+second6", (s) => `${s.episodesEverMax8Second6} (${pct(s.episodesEverMax8Second6, totalEpisodes)}%)`);
   line("ever max8+second7", (s) => `${s.episodesEverMax8Second7} (${pct(s.episodesEverMax8Second7, totalEpisodes)}%)`);
   line("mp7>0 while max≥8 (episodes)", (s) => `${s.episodesEverMp7PositiveWhileMaxGte8} (${pct(s.episodesEverMp7PositiveWhileMaxGte8, totalEpisodes)}%)`);
@@ -207,6 +219,35 @@ function printMonteCarloStats(stats: MonteCarloStats, totalEpisodes: number): vo
   );
   console.log(
     `    final canMerge8Now: ${stats.episodesFinalCanMerge8Now} (${pct(stats.episodesFinalCanMerge8Now, totalEpisodes)}%)`
+  );
+  console.log("    --- dead-state diagnostics ---");
+  console.log(
+    `    episodes flagged forcedLoss at some turn: ${stats.episodesEverForcedLoss} (${pct(stats.episodesEverForcedLoss, totalEpisodes)}%)`
+  );
+  console.log(
+    `    episodes with blocked required merge level 4: ${stats.episodesBlockedRequiredMerge4} (${pct(stats.episodesBlockedRequiredMerge4, totalEpisodes)}%)`
+  );
+  console.log(
+    `    episodes with blocked required merge level 5: ${stats.episodesBlockedRequiredMerge5} (${pct(stats.episodesBlockedRequiredMerge5, totalEpisodes)}%)`
+  );
+  console.log(
+    `    episodes with blocked required merge level 6: ${stats.episodesBlockedRequiredMerge6} (${pct(stats.episodesBlockedRequiredMerge6, totalEpisodes)}%)`
+  );
+  console.log(
+    `    episodes with blocked required merge level 7: ${stats.episodesBlockedRequiredMerge7} (${pct(stats.episodesBlockedRequiredMerge7, totalEpisodes)}%)`
+  );
+  console.log(
+    `    final board forcedLoss: ${stats.episodesFinalForcedLoss} (${pct(stats.episodesFinalForcedLoss, totalEpisodes)}%)`
+  );
+  console.log(`    mean peak dead severity: ${stats.meanPeakDeadSeverity.toFixed(4)}`);
+  console.log(`    mean final dead severity: ${stats.meanFinalDeadSeverity.toFixed(4)}`);
+  console.log(`    mean peak blockedLevels: ${stats.meanPeakBlockedLevelsCount.toFixed(4)}`);
+  console.log(`    mean final blockedLevels: ${stats.meanFinalBlockedLevelsCount.toFixed(4)}`);
+  console.log(
+    `    episodes with one 8 + one 7 + forcedLoss: ${stats.episodesOne8One7WithForcedLoss} (${pct(stats.episodesOne8One7WithForcedLoss, totalEpisodes)}%)`
+  );
+  console.log(
+    `    episodes with two 7s + forcedLoss: ${stats.episodesTwo7WithForcedLoss} (${pct(stats.episodesTwo7WithForcedLoss, totalEpisodes)}%)`
   );
   console.log(
     `    ever max8+second6 snapshot: ${stats.episodesEverMax8Second6} (${pct(stats.episodesEverMax8Second6, totalEpisodes)}%)`
@@ -526,6 +567,9 @@ if (!traceOnly) {
   );
   console.log(
     `  mp7: peak=${one.peakMergePotential7.toFixed(3)} final=${one.finalMergePotential7.toFixed(3)} mp7+|max≥8=${one.everHadMp7PositiveWhileMaxGte8} 8+7&mp7+=${one.everHadMax8Second7WithMp7Positive} 8+7&mp7=0=${one.everHadMax8Second7WithMp7Zero}`
+  );
+  console.log(
+    `  dead: everForcedLoss=${one.everForcedLoss} finalForcedLoss=${one.finalForcedLoss} peakDeadSeverity=${one.peakDeadSeverity.toFixed(3)} finalDeadSeverity=${one.finalDeadSeverity.toFixed(3)}`
   );
 }
 

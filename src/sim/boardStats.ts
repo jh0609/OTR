@@ -116,6 +116,25 @@ export function hasAdjacentCrossPair(board: Board, levelA: number, levelB: numbe
 
 export type HighLevelAdjState = "88" | "87" | "77" | "none";
 
+export type DeadStateReason =
+  | "required_merge_blocked"
+  | "no_rebuild_slack"
+  | "locked_by_higher_tiles"
+  | "hamiltonian_order_broken"
+  | "resource_chain_insufficient";
+
+export interface MergeRequirement {
+  level: number;
+  count: number;
+}
+
+export interface DeadStateReport {
+  forcedLoss: boolean;
+  reasons: DeadStateReason[];
+  blockedLevels: number[];
+  severity: number;
+}
+
 /**
  * 인접한 고레벨 merge 준비 상태(우선순위: 8+8 → 8+7 → 7+7).
  * 해당 인벤토리가 없으면 'none'.
@@ -203,6 +222,152 @@ export function immediateMergeCount(board: Board, level: number): number {
     if (c > m) m = c;
   }
   return m;
+}
+
+/** 최종 8+8→9(시뮬 승리)까지 필요한 레벨별 머지 수(휴리스틱 계획). */
+export function requiredMergesToWin(board: Board): MergeRequirement[] {
+  const needTiles: Record<number, number> = {};
+  const reqMerges: Record<number, number> = {};
+  const c8 = countTilesEqual(board, 8);
+  // Win requires two level-8 tiles before performing 8+8.
+  needTiles[8] = Math.max(0, 2 - c8);
+  reqMerges[8] = c8 >= 2 ? 1 : 0;
+  for (let level = 8; level >= 2; level--) {
+    const need = needTiles[level] ?? 0;
+    if (need <= 0) continue;
+    const have = countTilesEqual(board, level);
+    const deficit = Math.max(0, need - have);
+    if (deficit <= 0) continue;
+    reqMerges[level - 1] = (reqMerges[level - 1] ?? 0) + deficit;
+    needTiles[level - 1] = (needTiles[level - 1] ?? 0) + deficit * 2;
+  }
+  const out: MergeRequirement[] = [];
+  for (let level = 8; level >= 1; level--) {
+    const count = reqMerges[level] ?? 0;
+    if (count > 0) out.push({ level, count });
+  }
+  return out;
+}
+
+function minManhattanDistanceAtLevel(board: Board, level: number): number {
+  const idx: number[] = [];
+  for (let i = 0; i < LEN; i++) {
+    if (board[i] === level) idx.push(i);
+  }
+  if (idx.length < 2) return Number.POSITIVE_INFINITY;
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < idx.length; i++) {
+    const a = idx[i]!;
+    const ar = Math.floor(a / 3);
+    const ac = a % 3;
+    for (let j = i + 1; j < idx.length; j++) {
+      const b = idx[j]!;
+      const br = Math.floor(b / 3);
+      const bc = b % 3;
+      const d = Math.abs(ar - br) + Math.abs(ac - bc);
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+
+function highLevelOrderBroken(board: Board): boolean {
+  // Snake/Hamiltonian-like path from anchor.
+  const path = [8, 7, 6, 5, 4, 3, 2, 1, 0];
+  let prev = Number.POSITIVE_INFINITY;
+  let violations = 0;
+  for (const i of path) {
+    const v = board[i]!;
+    if (v < 6) continue;
+    if (v > prev) violations++;
+    prev = v;
+  }
+  return violations >= 2;
+}
+
+/** 특정 level 머지가 사실상 봉쇄됐는지 강한 휴리스틱으로 판정. */
+export function isRequiredMergeBlocked(board: Board, level: number): boolean {
+  if (level < 1 || level > 8) return false;
+  if (hasImmediateMerge(board, level)) return false;
+
+  const cnt = countTilesEqual(board, level);
+  const ec = emptyCount(board);
+  const mx = maxTileLevel(board);
+  const sm = secondMaxTile(board);
+  const rebuild = rebuildLaneScore(board);
+  const lowPairs = countLowLevelMergePairs(board, Math.max(1, Math.min(4, level)));
+  const mpSelf = mergePotentialAtLevel(board, level);
+  const mpBelow = level > 1 ? mergePotentialAtLevel(board, level - 1) : 0;
+  const dist = minManhattanDistanceAtLevel(board, level);
+
+  if (cnt < 2) {
+    // Not enough resources and little way to build from below.
+    if (mpBelow < 1.1 && lowPairs === 0 && ec <= 1) return true;
+    if (mx >= 8 && sm >= 7 && ec <= 2 && rebuild < 2.2 && mpBelow < 1.8) return true;
+  } else {
+    // Has at least two, but cannot close pair in constrained late board.
+    if (Number.isFinite(dist) && dist >= 3 && ec <= 1 && rebuild < 2.5) return true;
+    if (mx >= 8 && sm >= 7 && ec <= 1 && mpSelf < 1.2) return true;
+  }
+  return false;
+}
+
+/** 후반 dead-state를 구조적으로 판정. */
+export function analyzeLateDeadState(board: Board): DeadStateReport {
+  const mx = maxTileLevel(board);
+  const sm = secondMaxTile(board);
+  if (mx < 7) {
+    return { forcedLoss: false, reasons: [], blockedLevels: [], severity: 0 };
+  }
+
+  const reasons = new Set<DeadStateReason>();
+  const req = requiredMergesToWin(board);
+  const blockedLevels: number[] = [];
+  for (const r of req) {
+    if (isRequiredMergeBlocked(board, r.level)) {
+      blockedLevels.push(r.level);
+    }
+  }
+  if (blockedLevels.length > 0) reasons.add("required_merge_blocked");
+
+  const ec = emptyCount(board);
+  const cge7 = countTilesAtLeast(board, 7);
+  const can7 = hasImmediateMerge(board, 7);
+  const can8 = hasImmediateMerge(board, 8);
+  const rebuild = rebuildLaneScore(board);
+  const lowPairs = countLowLevelMergePairs(board, 4);
+
+  if (ec <= 1 && !can7 && !can8 && cge7 >= 3) reasons.add("no_rebuild_slack");
+  if (mx >= 8 && sm >= 7 && ec <= 1 && rebuild < 2.3 && !can7 && !can8) {
+    reasons.add("locked_by_higher_tiles");
+  }
+  if (highLevelOrderBroken(board)) reasons.add("hamiltonian_order_broken");
+
+  // Resource-chain heuristic: many required levels but no build slack.
+  if (req.length >= 3 && lowPairs === 0 && rebuild < 2.0 && ec <= 2) {
+    reasons.add("resource_chain_insufficient");
+  }
+
+  let severity = 0;
+  severity += Math.min(0.6, blockedLevels.length * 0.22);
+  if (reasons.has("no_rebuild_slack")) severity += 0.2;
+  if (reasons.has("locked_by_higher_tiles")) severity += 0.2;
+  if (reasons.has("hamiltonian_order_broken")) severity += 0.1;
+  if (reasons.has("resource_chain_insufficient")) severity += 0.15;
+  severity = Math.max(0, Math.min(1, severity));
+
+  const forcedLoss =
+    blockedLevels.length >= 2 ||
+    (blockedLevels.length >= 1 &&
+      reasons.has("no_rebuild_slack") &&
+      reasons.has("locked_by_higher_tiles"));
+
+  return {
+    forcedLoss,
+    reasons: Array.from(reasons),
+    blockedLevels: blockedLevels.sort((a, b) => a - b),
+    severity,
+  };
 }
 
 /**

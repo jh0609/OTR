@@ -18,6 +18,7 @@ import {
   maxTileAtAnchor,
   mergePotentialAtLevel,
   endgame7To8Potential,
+  analyzeLateDeadState,
 } from "./boardStats";
 import type { EndgameTuning, EndgameTuningConfig } from "./endgameTuning";
 import { mergeEndgameTuning } from "./endgameTuning";
@@ -177,6 +178,14 @@ function scorePhase3(board: Board, t: EndgameTuning): number {
     if (mx === 8 && sm === 7) score += t.max8Second7Bonus;
     if (count7 >= 2) score += t.two7EndgameBonus;
     if (mergePotentialAtLevel(board, 7) > 0) score += t.active7MergeBonus;
+  }
+
+  const dead = analyzeLateDeadState(board);
+  if (dead.forcedLoss) {
+    score -= t.forcedLossPenalty;
+  } else {
+    score -= t.deadSeverityWeight * dead.severity;
+    score -= t.blockedLevelPenalty * dead.blockedLevels.length;
   }
 
   return score;
