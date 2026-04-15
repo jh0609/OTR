@@ -24,6 +24,25 @@ export const TERMINAL_REASONS = [
 
 export type TerminalReason = (typeof TERMINAL_REASONS)[number];
 
+/**
+ * 종료 직전 최대 10수: 각 항목은 "그 수를 두기 직전" 국면 + 선택한 방향.
+ * `movesFromEnd`: 1 = 패배/승리 직전 마지막으로 둔 한 수 직전, 10 = 그보다 9수 앞(에피소드가 짧으면 최대 길이만큼만 존재).
+ */
+export type EpisodeTailMoveSnapshot = {
+  readonly movesFromEnd: number;
+  readonly legalCount: number;
+  readonly emptyCount: number;
+  readonly maxLevel: number;
+  readonly secondMax: number;
+  readonly mergePairs: number;
+  readonly mp7: number;
+  /** 전역 최댓값이 네 구석 중 하나에 있으면 1 */
+  readonly maxAtAnyCorner: number;
+  readonly chosenDirection: Direction;
+  /** 슬라이드 직전 보드 (row-major 인덱스 0..8, 길이 9). */
+  readonly boardCells: readonly number[];
+};
+
 export type EpisodeResult = {
   readonly win: boolean;
   readonly steps: number;
@@ -85,18 +104,9 @@ export type EpisodeResult = {
   readonly everHadAdjacent88ButNoImmediateMerge8: boolean;
   readonly finalCanMerge7Now: boolean;
   readonly finalCanMerge8Now: boolean;
-  readonly everForcedLoss: boolean;
-  readonly everBlockedRequiredMerge4: boolean;
-  readonly everBlockedRequiredMerge5: boolean;
-  readonly everBlockedRequiredMerge6: boolean;
-  readonly everBlockedRequiredMerge7: boolean;
-  readonly peakDeadSeverity: number;
-  readonly peakBlockedLevelsCount: number;
-  readonly finalForcedLoss: boolean;
-  readonly finalDeadSeverity: number;
-  readonly finalBlockedLevelsCount: number;
-  readonly everOne8One7WithForcedLoss: boolean;
-  readonly everTwo7WithForcedLoss: boolean;
+
+  /** 최대 10개, 시간순(오래된 것이 앞). */
+  readonly tailMoves: readonly EpisodeTailMoveSnapshot[];
 };
 
 export type MonteCarloStats = {
@@ -148,16 +158,22 @@ export type MonteCarloStats = {
   readonly episodesEverAdjacent88NoImmediate8: number;
   readonly episodesFinalCanMerge7Now: number;
   readonly episodesFinalCanMerge8Now: number;
-  readonly episodesEverForcedLoss: number;
-  readonly episodesBlockedRequiredMerge4: number;
-  readonly episodesBlockedRequiredMerge5: number;
-  readonly episodesBlockedRequiredMerge6: number;
-  readonly episodesBlockedRequiredMerge7: number;
-  readonly episodesFinalForcedLoss: number;
-  readonly meanPeakDeadSeverity: number;
-  readonly meanFinalDeadSeverity: number;
-  readonly meanPeakBlockedLevelsCount: number;
-  readonly meanFinalBlockedLevelsCount: number;
-  readonly episodesOne8One7WithForcedLoss: number;
-  readonly episodesTwo7WithForcedLoss: number;
+
+  /**
+   * 극후반(마지막 10수 구간) 집계. `lateTail*` 인덱스 i = `movesFromEnd === i+1` (i=0 → 1수 전, i=9 → 10수 전).
+   */
+  readonly lateTailSampleCount: readonly number[];
+  readonly lateTailAvgLegal: readonly number[];
+  readonly lateTailAvgEmpty: readonly number[];
+  readonly lateTailAvgMergePairs: readonly number[];
+  readonly lateTailAvgMp7: readonly number[];
+  readonly lateTailFracMaxCorner: readonly number[];
+  /** 마지막 수 직전 스냅샷이 있는 에피소드 수 */
+  readonly lateLastMoveSampleCount: number;
+  readonly lateLastMoveLegalLe1: number;
+  readonly lateLastMoveEmptyLe1: number;
+  readonly lateLastMoveMergePairsZero: number;
+  readonly lateLastMoveMp7LtPoint5: number;
+  readonly lateLastMoveMaxNotCorner: number;
+  readonly lateLastMoveChosenDir: Readonly<Record<Direction, number>>;
 };

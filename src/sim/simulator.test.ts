@@ -133,6 +133,10 @@ describe("simulateOne", () => {
     expect(r.steps).toBeGreaterThan(0);
     expect(r.steps).toBeLessThan(600_000);
     expect(r.finalMaxLevel).toBeLessThanOrEqual(r.maxLevelReached);
+    expect(r.tailMoves.length).toBeGreaterThan(0);
+    expect(r.tailMoves.length).toBeLessThanOrEqual(Math.min(10, r.steps));
+    expect(r.tailMoves[r.tailMoves.length - 1]!.movesFromEnd).toBe(1);
+    expect(r.tailMoves[0]!.boardCells.length).toBe(9);
   });
 
   it("initial strict rule can fail before first move", () => {
@@ -141,6 +145,7 @@ describe("simulateOne", () => {
     expect(r.win).toBe(false);
     expect(r.steps).toBe(0);
     expect(r.terminalReason).toBe("strict_rule_failed");
+    expect(r.tailMoves.length).toBe(0);
   });
 });
 
@@ -167,6 +172,8 @@ describe("runMonteCarlo", () => {
     let spk = 0;
     for (let k = 0; k <= 8; k++) spk += mc.peakSecondMaxDistribution[k] ?? 0;
     expect(spk).toBe(20);
+    expect(mc.lateTailSampleCount.length).toBe(10);
+    expect(mc.lateLastMoveSampleCount).toBeGreaterThan(0);
     let sc8 = 0;
     for (let k = 0; k <= 9; k++) sc8 += mc.finalCount8Distribution[k] ?? 0;
     expect(sc8).toBe(20);

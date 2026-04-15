@@ -6,7 +6,7 @@ import { step as coreStep, isGameOver, hasWon, getEmptyCount } from "../core";
 import {
   getHint,
   createHintSearchContext,
-  experimentCEndgameWith78MergeTiming,
+  mergeEndgameTuning,
   type HintSearchConfig,
 } from "../../sim";
 import { gameBoardToSim, simDirectionToGame } from "../hintBridge";
@@ -358,33 +358,7 @@ export class GameScene extends Phaser.Scene {
 
   private hintSearchOptions(): HintSearchConfig {
     return {
-      tuning: {
-        ...experimentCEndgameWith78MergeTiming,
-        active7MergeBonus: 1800,
-        mergePotential7Weight: 820,
-        deltaMergePotential7Weight: 1100,
-        mergeNow7Bonus: 5200,
-        mergeNow8Bonus: 26000,
-        deferMerge7Penalty: 1200,
-        deferMerge8Penalty: 3600,
-        deltaImmediateMerge7Gain: 2800,
-        deltaImmediateMerge7Loss: 3600,
-        deltaImmediateMerge8Gain: 11000,
-        deltaImmediateMerge8Loss: 15000,
-        adjacent77Bonus: 1200,
-        separatedTwo7Penalty: 800,
-        two7DistancePenaltyWeight: 900,
-        highLevelNoMergePenalty: 2400,
-        highLevelNoMergePerTilePenalty: 900,
-        highLevelNoMergeLowEmptyPenalty: 1300,
-        highLevelEmptyCellReward: 160,
-        forcedLossPenalty: 1_000_000,
-        deadSeverityWeight: 2500,
-        blockedLevelPenalty: 1000,
-        endgame78Weight: 320,
-        rebuildWeight: 240,
-        deltaRebuildPreferenceWeight: 260,
-      },
+      tuning: mergeEndgameTuning({ rebuildWeight: 240 }),
       lateThreshold: 7,
       depthEarly: 5,
       beamWidthEarly: 8,
@@ -398,7 +372,6 @@ export class GameScene extends Phaser.Scene {
       sessionPreferredValueKeys: this.hintPreferredValueKeys,
       searchContext: this.hintSearchContext,
       prewarmNodeExpansions: 12,
-      enableDeadStatePrune: true,
     };
   }
 

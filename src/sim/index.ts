@@ -6,6 +6,7 @@ export type {
   TerminalMode,
   TerminalReason,
   EpisodeResult,
+  EpisodeTailMoveSnapshot,
   MonteCarloStats,
 } from "./types";
 export { TERMINAL_REASONS } from "./types";
@@ -126,8 +127,6 @@ export {
   maxTileMovedOffAnchor,
   lateGameSlidePenalty,
   mergePotentialAtLevel,
-  endgame7To8Potential,
-  ultraLateSlidePreference,
   areAdjacent,
   hasAdjacentPair,
   hasAdjacentCrossPair,
@@ -136,16 +135,50 @@ export {
   hasImmediateMerge,
   immediateMergeCount,
   countMergesAtLevelInSlide,
-  mergeTimingSlideDelta,
-  requiredMergesToWin,
-  isRequiredMergeBlocked,
-  analyzeLateDeadState,
-  type MergeRequirement,
-  type DeadStateReason,
-  type DeadStateReport,
+  CORNER_CELL_INDICES,
+  maxTileAtAnyCorner,
+  highLevelMergePathValue,
 } from "./boardStats";
 
-export { simulateOne, runMonteCarlo, emptyBoard, boardFrom } from "./simulate";
+export {
+  simulateOne,
+  runMonteCarlo,
+  emptyBoard,
+  boardFrom,
+  type MonteCarloProgressEvent,
+  type MonteCarloRunOptions,
+} from "./simulate";
+
+export {
+  isSurvivalTerminal,
+  countImmediateMergePairs,
+  countOneStepSurvivors,
+  isNearDead,
+  isNearDeadFromComponents,
+  scoreBoardMinimal,
+  minimalPolicy,
+  createInitialBoardMinimal,
+  simulateOneMinimalSurvival,
+  type MinimalSurvivalTurnSnapshot,
+  type MinimalSurvivalEpisodeReport,
+} from "./minimalSurvival";
+
+export {
+  extractSurvivalFeatures,
+  toSurvivalCheckpoint,
+  indicesOfGlobalMax,
+  isMaxTileAnchorShifted,
+  isDeadish,
+  isDeadishTailStyle,
+  isNearDeadFromFeatures,
+  type SurvivalFeatures,
+  type SurvivalCheckpoint,
+  type SurvivalCheckpointKind,
+} from "./survivalFeatures";
+
+export { SurvivalEpisodeRecorder, type SurvivalNdjsonRow } from "./survivalEpisodeRecorder";
+
+export { runMinimalSurvivalMonteCarlo, type MinimalSurvivalAggregate } from "./minimalSurvivalMonteCarlo";
 
 export {
   getHint,

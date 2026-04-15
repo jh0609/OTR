@@ -1,29 +1,20 @@
 /**
- * scoreBoardV3 Phase3( max≥7 ) 및 lateGameSlidePenalty 계수.
- * Partial 로 넘기면 mergeEndgameTuning 으로 baseline 과 합성.
+ * scoreBoardV3 Phase3(max≥7) 및 lateGameSlidePenalty 에 쓰는 최소 튜닝.
+ * Partial 은 mergeEndgameTuning 으로 BASE 와 합성.
  */
 
 export type EndgameTuningConfig = {
-  /** Phase3: max 타일 레벨 가중. 기본 140 */
+  /** Phase3: max 타일 레벨 가중 */
   maxTileWeight?: number;
   count7Weight?: number;
   count8Weight?: number;
   countGE7Weight?: number;
   secondMaxWeight?: number;
 
-  two7Bonus?: number;
-  one8one7Bonus?: number;
-  two8Bonus?: number;
-
-  /** secondMaxTile === 7 일 때 추가 (Phase3) */
-  secondMaxIs7Bonus?: number;
-  /** secondMaxTile === 6 일 때 추가 (Phase3) */
-  secondMaxIs6Bonus?: number;
-
   rebuildWeight?: number;
   trappedWeight?: number;
 
-  /** gap = maxTile - secondMax 에 대해 Math.max(0, gap-1), Math.max(0, gap-2) 배수 */
+  /** gap = maxTile - secondMax */
   gapPenalty1?: number;
   gapPenalty2?: number;
 
@@ -32,63 +23,12 @@ export type EndgameTuningConfig = {
   rebuildDropDelta?: number;
 
   emptyZeroPenalty?: number;
-  /** Phase3에서 빈 칸 1개당 추가 보너스 (고레벨 구간 유동성 확보). */
-  highLevelEmptyCellReward?: number;
   movedOffAnchorPenalty?: number;
 
-  /** endgame7To8Potential 전체에 곱함 */
-  endgame78Weight?: number;
-  max8Second7Bonus?: number;
-  /** ultra 엔드게임 구간에서 count(7)≥2 추가 보너스 */
-  two7EndgameBonus?: number;
-  /** mergePotentialAtLevel(7) > 0 일 때 */
-  active7MergeBonus?: number;
-  /** endgame7To8Potential 내부 mp7/mp6 스케일 */
-  mergePotential7Weight?: number;
-  mergePotential6Weight?: number;
-
-  /** max≥8 && second≥7 일 때 슬라이드 Q에 delta 반영 */
-  deltaMergePotential7Weight?: number;
-  deltaRebuildPreferenceWeight?: number;
-  deltaTrappedPenaltyWeight?: number;
-
-  /** Phase3: 조건 충족인데 해당 레벨 쌍이 인접하지 않을 때 (이진 패널티). */
-  penalty88NotAdjacent?: number;
-  penalty87NotAdjacent?: number;
-  penalty77NotAdjacent?: number;
-  /** maxTile≥7 슬라이드 직후: 인접 준비 없음→생김 / 생김→없음 에 가산·감산 */
-  deltaHighLevelAdjacencyGain?: number;
-  deltaHighLevelAdjacencyLoss?: number;
-
-  /** Phase3: 한 수로 7→8 / 8→9 머지 가능할 때 보너스 */
-  mergeNow7Bonus?: number;
-  mergeNow8Bonus?: number;
-  /** count≥2 인데 즉시 머지 불가일 때 (미루기) */
-  deferMerge7Penalty?: number;
-  deferMerge8Penalty?: number;
-  /** count(7)≥2 && 인접(7,7)일 때 보너스 */
-  adjacent77Bonus?: number;
-  /** count(7)≥2 && 비인접(7,7)일 때 추가 패널티 */
-  separatedTwo7Penalty?: number;
-  /** count(7)≥2일 때 7-7 최소 맨해튼 거리 기반 추가 패널티 가중치 */
-  two7DistancePenaltyWeight?: number;
-  /** 고레벨 과밀(>=7 다수) + 즉시 머지 불가일 때 기본 패널티 */
-  highLevelNoMergePenalty?: number;
-  /** 고레벨 과밀 시 count(>=7)-2 에 비례한 추가 패널티 */
-  highLevelNoMergePerTilePenalty?: number;
-  /** 고레벨 과밀 + 빈칸 부족 시 추가 패널티 */
-  highLevelNoMergeLowEmptyPenalty?: number;
-  /** dead-state 강제 패배 판정 시 감점 */
-  forcedLossPenalty?: number;
-  /** dead-state 심각도(0~1)에 곱해 감점 */
-  deadSeverityWeight?: number;
-  /** blocked required merge 레벨 수에 비례 감점 */
-  blockedLevelPenalty?: number;
-  /** 슬라이드로 즉시 머지 가능 상태가 열리거나 닫힐 때 Q 델타 */
-  deltaImmediateMerge7Gain?: number;
-  deltaImmediateMerge7Loss?: number;
-  deltaImmediateMerge8Gain?: number;
-  deltaImmediateMerge8Loss?: number;
+  /** Phase2·3: `highLevelMergePathValue`(6/7/8 mergePotential 가중합) 가중 */
+  highLevelMergePathWeight?: number;
+  /** Phase2·3: 전역 최댓값 타일이 네 구석 중 하나에 있으면 1 — 그때 곱하는 가중 */
+  highLevelCornerWeight?: number;
 };
 
 export type EndgameTuning = Required<EndgameTuningConfig>;
@@ -100,13 +40,6 @@ const BASE: EndgameTuning = {
   countGE7Weight: 180,
   secondMaxWeight: 220,
 
-  two7Bonus: 1200,
-  one8one7Bonus: 3500,
-  two8Bonus: 100_000,
-
-  secondMaxIs7Bonus: 0,
-  secondMaxIs6Bonus: 0,
-
   rebuildWeight: 100,
   trappedWeight: 120,
 
@@ -117,43 +50,10 @@ const BASE: EndgameTuning = {
   rebuildDropDelta: 2,
 
   emptyZeroPenalty: 800,
-  highLevelEmptyCellReward: 0,
   movedOffAnchorPenalty: 2000,
 
-  endgame78Weight: 0,
-  max8Second7Bonus: 0,
-  two7EndgameBonus: 0,
-  active7MergeBonus: 0,
-  mergePotential7Weight: 0,
-  mergePotential6Weight: 0,
-
-  deltaMergePotential7Weight: 0,
-  deltaRebuildPreferenceWeight: 0,
-  deltaTrappedPenaltyWeight: 0,
-
-  penalty88NotAdjacent: 1200,
-  penalty87NotAdjacent: 700,
-  penalty77NotAdjacent: 400,
-  deltaHighLevelAdjacencyGain: 400,
-  deltaHighLevelAdjacencyLoss: 500,
-
-  mergeNow7Bonus: 0,
-  mergeNow8Bonus: 0,
-  deferMerge7Penalty: 0,
-  deferMerge8Penalty: 0,
-  adjacent77Bonus: 0,
-  separatedTwo7Penalty: 0,
-  two7DistancePenaltyWeight: 0,
-  highLevelNoMergePenalty: 0,
-  highLevelNoMergePerTilePenalty: 0,
-  highLevelNoMergeLowEmptyPenalty: 0,
-  forcedLossPenalty: 1_000_000,
-  deadSeverityWeight: 2500,
-  blockedLevelPenalty: 1000,
-  deltaImmediateMerge7Gain: 0,
-  deltaImmediateMerge7Loss: 0,
-  deltaImmediateMerge8Gain: 0,
-  deltaImmediateMerge8Loss: 0,
+  highLevelMergePathWeight: 32,
+  highLevelCornerWeight: 60,
 };
 
 export function mergeEndgameTuning(partial?: EndgameTuningConfig | null): EndgameTuning {
@@ -161,84 +61,34 @@ export function mergeEndgameTuning(partial?: EndgameTuningConfig | null): Endgam
   return { ...BASE, ...partial };
 }
 
-/** 기존 하드코드와 동일한 baseline. */
 export const baselineEndgameTuning: EndgameTuning = mergeEndgameTuning();
 
-/** Experiment A: 8+7 강화 */
+/** 실험용: 약간 다른 가중만 유지(정책 객체 구분·회귀 테스트용). */
 export const experimentAEndgameTuning: EndgameTuning = mergeEndgameTuning({
-  one8one7Bonus: 8000,
-  secondMaxIs7Bonus: 1800,
-  count8Weight: 240,
-  count7Weight: 280,
-  countGE7Weight: 200,
   secondMaxWeight: 240,
 });
 
-/** Experiment B: 7+7 유지·갭 패널티 강화 */
 export const experimentBEndgameTuning: EndgameTuning = mergeEndgameTuning({
-  two7Bonus: 3200,
-  count7Weight: 340,
-  secondMaxWeight: 260,
-  count8Weight: 220,
-  gapPenalty1: 160,
-  gapPenalty2: 280,
+  gapPenalty1: 140,
 });
 
-/** Experiment C: 후반 슬라이드 페널티 완화 + rebuild 장려 (7→8 휴리스틱 없음) */
 export const experimentCEndgameTuning: EndgameTuning = mergeEndgameTuning({
-  rebuildWeight: 180,
+  rebuildWeight: 120,
+  trappedWeight: 100,
   rebuildDropPenalty: 250,
   emptyZeroPenalty: 600,
-  highLevelEmptyCellReward: 0,
-  trappedWeight: 100,
 });
 
-/** C + 7→8 merge potential · 8+7 엔드게임 · ultra late 슬라이드 선호 */
 export const experimentCEndgameWith78Tuning: EndgameTuning = mergeEndgameTuning({
-  rebuildWeight: 180,
+  rebuildWeight: 130,
+  trappedWeight: 100,
   rebuildDropPenalty: 250,
   emptyZeroPenalty: 600,
-  highLevelEmptyCellReward: 0,
-  trappedWeight: 100,
-  endgame78Weight: 220,
-  max8Second7Bonus: 4000,
-  two7EndgameBonus: 2500,
-  active7MergeBonus: 1200,
-  mergePotential7Weight: 500,
-  mergePotential6Weight: 160,
-  deltaMergePotential7Weight: 600,
-  deltaRebuildPreferenceWeight: 120,
-  deltaTrappedPenaltyWeight: 100,
 });
 
-/** C+78 + merge timing(즉시 머지 보너스·미루기 패널티·슬라이드 Q 델타) */
 export const experimentCEndgameWith78MergeTiming: EndgameTuning = mergeEndgameTuning({
-  rebuildWeight: 180,
+  rebuildWeight: 140,
+  trappedWeight: 100,
   rebuildDropPenalty: 250,
   emptyZeroPenalty: 600,
-  highLevelEmptyCellReward: 0,
-  trappedWeight: 100,
-  endgame78Weight: 220,
-  max8Second7Bonus: 4000,
-  two7EndgameBonus: 2500,
-  active7MergeBonus: 1200,
-  mergePotential7Weight: 500,
-  mergePotential6Weight: 160,
-  deltaMergePotential7Weight: 600,
-  deltaRebuildPreferenceWeight: 120,
-  deltaTrappedPenaltyWeight: 100,
-  mergeNow7Bonus: 4200,
-  mergeNow8Bonus: 22000,
-  deferMerge7Penalty: 900,
-  deferMerge8Penalty: 2800,
-  adjacent77Bonus: 0,
-  separatedTwo7Penalty: 0,
-  two7DistancePenaltyWeight: 0,
-  highLevelNoMergePenalty: 0,
-  highLevelNoMergePerTilePenalty: 0,
-  highLevelNoMergeLowEmptyPenalty: 0,
-  deltaImmediateMerge7Gain: 2200,
-  deltaImmediateMerge7Loss: 3000,
-  deltaImmediateMerge8Gain: 9000,
-  deltaImmediateMerge8Loss: 12000,
 });

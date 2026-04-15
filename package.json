@@ -10,6 +10,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "tsx tools/run-sim.ts",
+    "analyze:tail": "tsx tools/analyze-tail-jsonl.ts --out out/tail-full-analysis.txt",
+    "sim:minimal": "tsx tools/minimal-survival-experiment.ts",
+    "minimal:jsonl": "tsx tools/run-minimal-jsonl.ts",
+    "minimal:aggregate": "tsx tools/aggregate-minimal-jsonl.ts",
     "tiles:process": "node tools/chroma-key.mjs"
   },
   "devDependencies": {

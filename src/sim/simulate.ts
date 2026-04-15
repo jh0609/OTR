@@ -1,6 +1,15 @@
-import type { Board, EpisodeResult, MonteCarloStats, Policy, TerminalMode, TerminalReason } from "./types";
+import type {
+  Board,
+  Direction,
+  EpisodeResult,
+  EpisodeTailMoveSnapshot,
+  MonteCarloStats,
+  Policy,
+  TerminalMode,
+  TerminalReason,
+} from "./types";
 import { TERMINAL_REASONS } from "./types";
-import { freezeBoard, toUint8, LEN, maxTileLevel } from "./board";
+import { freezeBoard, toUint8, LEN, maxTileLevel, emptyCount } from "./board";
 import {
   secondMaxTile,
   top2Gap,
@@ -16,14 +25,44 @@ import {
   hasAdjacentPair,
   hasImmediateMerge,
   mergePotentialAtLevel,
-  analyzeLateDeadState,
+  maxTileAtAnyCorner,
 } from "./boardStats";
+import { countMergePairs } from "./scoring";
 import { slide } from "./slide";
 import { legalActions } from "./legal";
 import { spawnRandom } from "./spawn";
 import { createRng } from "./rng";
+import type { SurvivalEpisodeRecorder } from "./survivalEpisodeRecorder.ts";
 
 const EMPTY: Board = Object.freeze(new Array(9).fill(0)) as Board;
+
+type TailDraft = {
+  legalCount: number;
+  emptyCount: number;
+  maxLevel: number;
+  secondMax: number;
+  mergePairs: number;
+  mp7: number;
+  maxAtAnyCorner: number;
+  chosenDirection: Direction;
+  boardCells: readonly number[];
+};
+
+function buildTailMoves(tailDrafts: readonly TailDraft[]): readonly EpisodeTailMoveSnapshot[] {
+  const last = tailDrafts.slice(-10);
+  return last.map((t, i) => ({
+    movesFromEnd: last.length - i,
+    legalCount: t.legalCount,
+    emptyCount: t.emptyCount,
+    maxLevel: t.maxLevel,
+    secondMax: t.secondMax,
+    mergePairs: t.mergePairs,
+    mp7: t.mp7,
+    maxAtAnyCorner: t.maxAtAnyCorner,
+    chosenDirection: t.chosenDirection,
+    boardCells: t.boardCells,
+  }));
+}
 
 type MutableEpisodeStats = {
   maxLevelReached: number;
@@ -50,15 +89,6 @@ type MutableEpisodeStats = {
   everImm8: boolean;
   everAdj77NoImm7: boolean;
   everAdj88NoImm8: boolean;
-  everForcedLoss: boolean;
-  everBlocked4: boolean;
-  everBlocked5: boolean;
-  everBlocked6: boolean;
-  everBlocked7: boolean;
-  peakDeadSeverity: number;
-  peakBlockedLevelsCount: number;
-  everOne8One7WithForcedLoss: boolean;
-  everTwo7WithForcedLoss: boolean;
 };
 
 function makeStats(): MutableEpisodeStats {
@@ -87,15 +117,6 @@ function makeStats(): MutableEpisodeStats {
     everImm8: false,
     everAdj77NoImm7: false,
     everAdj88NoImm8: false,
-    everForcedLoss: false,
-    everBlocked4: false,
-    everBlocked5: false,
-    everBlocked6: false,
-    everBlocked7: false,
-    peakDeadSeverity: 0,
-    peakBlockedLevelsCount: 0,
-    everOne8One7WithForcedLoss: false,
-    everTwo7WithForcedLoss: false,
   };
 }
 
@@ -139,19 +160,6 @@ function observeBoard(board: Board, s: MutableEpisodeStats): void {
   if (hasImmediateMerge(board, 8)) s.everImm8 = true;
   if (hasAdjacentPair(board, 7) && !hasImmediateMerge(board, 7)) s.everAdj77NoImm7 = true;
   if (hasAdjacentPair(board, 8) && !hasImmediateMerge(board, 8)) s.everAdj88NoImm8 = true;
-
-  const dead = analyzeLateDeadState(board);
-  if (dead.forcedLoss) s.everForcedLoss = true;
-  if (dead.blockedLevels.includes(4)) s.everBlocked4 = true;
-  if (dead.blockedLevels.includes(5)) s.everBlocked5 = true;
-  if (dead.blockedLevels.includes(6)) s.everBlocked6 = true;
-  if (dead.blockedLevels.includes(7)) s.everBlocked7 = true;
-  if (dead.severity > s.peakDeadSeverity) s.peakDeadSeverity = dead.severity;
-  if (dead.blockedLevels.length > s.peakBlockedLevelsCount) {
-    s.peakBlockedLevelsCount = dead.blockedLevels.length;
-  }
-  if (dead.forcedLoss && hasSimultaneousOne8AndOne7(board)) s.everOne8One7WithForcedLoss = true;
-  if (dead.forcedLoss && hasTwoOrMoreTilesEqual(board, 7)) s.everTwo7WithForcedLoss = true;
 }
 
 function finalize(
@@ -159,11 +167,11 @@ function finalize(
   steps: number,
   reason: TerminalReason,
   s: MutableEpisodeStats,
-  terminalBoard: Board
+  terminalBoard: Board,
+  tailDrafts: readonly TailDraft[]
 ): EpisodeResult {
   const c7f = countTilesEqual(terminalBoard, 7);
   const c8f = countTilesEqual(terminalBoard, 8);
-  const finalDead = analyzeLateDeadState(terminalBoard);
   return {
     win,
     steps,
@@ -207,18 +215,7 @@ function finalize(
     everHadAdjacent88ButNoImmediateMerge8: s.everAdj88NoImm8,
     finalCanMerge7Now: hasImmediateMerge(terminalBoard, 7),
     finalCanMerge8Now: hasImmediateMerge(terminalBoard, 8),
-    everForcedLoss: s.everForcedLoss,
-    everBlockedRequiredMerge4: s.everBlocked4,
-    everBlockedRequiredMerge5: s.everBlocked5,
-    everBlockedRequiredMerge6: s.everBlocked6,
-    everBlockedRequiredMerge7: s.everBlocked7,
-    peakDeadSeverity: s.peakDeadSeverity,
-    peakBlockedLevelsCount: s.peakBlockedLevelsCount,
-    finalForcedLoss: finalDead.forcedLoss,
-    finalDeadSeverity: finalDead.severity,
-    finalBlockedLevelsCount: finalDead.blockedLevels.length,
-    everOne8One7WithForcedLoss: s.everOne8One7WithForcedLoss,
-    everTwo7WithForcedLoss: s.everTwo7WithForcedLoss,
+    tailMoves: buildTailMoves(tailDrafts),
   };
 }
 
@@ -245,53 +242,87 @@ export function simulateOne(
   policy: Policy,
   rng: () => number,
   mode: TerminalMode = "standard",
-  extraRule?: (board: Board) => boolean
+  extraRule?: (board: Board) => boolean,
+  survival?: SurvivalEpisodeRecorder
 ): EpisodeResult {
   const s = makeStats();
   let board = initialBoard(rng);
   observeBoard(board, s);
   let steps = 0;
+  const tailDrafts: TailDraft[] = [];
+  let prevTurnStartBoard: Board | null = null;
 
   if (mode === "strict" && extraRule !== undefined && !extraRule(board)) {
-    return finalize(false, 0, "strict_rule_failed", s, board);
+    return finalize(false, 0, "strict_rule_failed", s, board, tailDrafts);
   }
 
   while (steps < MAX_STEPS) {
     const actions = legalActions(board);
     if (actions.length === 0) {
-      return finalize(false, steps, "no_legal_moves", s, board);
+      return finalize(false, steps, "no_legal_moves", s, board, tailDrafts);
     }
     if (mode === "strict" && extraRule !== undefined && !extraRule(board)) {
-      return finalize(false, steps, "strict_rule_failed", s, board);
+      return finalize(false, steps, "strict_rule_failed", s, board, tailDrafts);
     }
 
+    const boardBeforeSlide = board;
     const dir = policy(board, actions);
+    survival?.recordPreSlide(steps, board, prevTurnStartBoard, dir);
+    tailDrafts.push({
+      legalCount: actions.length,
+      emptyCount: emptyCount(board),
+      maxLevel: maxTileLevel(board),
+      secondMax: secondMaxTile(board),
+      mergePairs: countMergePairs(board),
+      mp7: mergePotentialAtLevel(board, 7),
+      maxAtAnyCorner: maxTileAtAnyCorner(board),
+      chosenDirection: dir,
+      boardCells: Array.from(board) as readonly number[],
+    });
     const { next, moved, win } = slide(board, dir);
     observeBoard(next, s);
     steps++;
 
-    if (win) return finalize(true, steps, "win", s, next);
+    if (win) return finalize(true, steps, "win", s, next, tailDrafts);
     if (!moved) {
-      return finalize(false, steps, "policy_illegal_move", s, next);
+      return finalize(false, steps, "policy_illegal_move", s, next, tailDrafts);
     }
 
     board = spawnRandom(next, rng);
+    survival?.recordPostSpawn(steps, board, boardBeforeSlide);
+    prevTurnStartBoard = boardBeforeSlide;
     observeBoard(board, s);
 
     if (mode === "strict" && extraRule !== undefined && !extraRule(board)) {
-      return finalize(false, steps, "strict_rule_failed", s, board);
+      return finalize(false, steps, "strict_rule_failed", s, board, tailDrafts);
     }
   }
 
-  return finalize(false, MAX_STEPS, "max_steps", s, board);
+  return finalize(false, MAX_STEPS, "max_steps", s, board, tailDrafts);
 }
+
+export type MonteCarloProgressEvent = {
+  readonly done: number;
+  readonly total: number;
+  readonly wins: number;
+  readonly stepSum: number;
+};
+
+export type MonteCarloRunOptions = {
+  /** `onProgress` 호출 간격(에피소드 수, 1 이상). */
+  readonly progressEvery?: number;
+  readonly onProgress?: (e: MonteCarloProgressEvent) => void;
+  /** 에피소드 종료 직후마다 호출(보내기·외부 분석용). */
+  readonly onEpisode?: (result: EpisodeResult, episodeIndex: number) => void;
+};
 
 export function runMonteCarlo(
   policy: Policy,
   n: number,
   seed: number,
   mode: TerminalMode = "standard",
-  extraRule?: (board: Board) => boolean
+  extraRule?: (board: Board) => boolean,
+  opts?: MonteCarloRunOptions
 ): MonteCarloStats {
   const rng = createRng(seed);
   let wins = 0;
@@ -333,19 +364,26 @@ export function runMonteCarlo(
   let episodesEverAdjacent88NoImmediate8 = 0;
   let episodesFinalCanMerge7Now = 0;
   let episodesFinalCanMerge8Now = 0;
-  let episodesEverForcedLoss = 0;
-  let episodesBlockedRequiredMerge4 = 0;
-  let episodesBlockedRequiredMerge5 = 0;
-  let episodesBlockedRequiredMerge6 = 0;
-  let episodesBlockedRequiredMerge7 = 0;
-  let episodesFinalForcedLoss = 0;
-  let sumPeakDeadSeverity = 0;
-  let sumFinalDeadSeverity = 0;
-  let sumPeakBlockedLevelsCount = 0;
-  let sumFinalBlockedLevelsCount = 0;
-  let episodesOne8One7WithForcedLoss = 0;
-  let episodesTwo7WithForcedLoss = 0;
   const terminalReasons = emptyTerminalReasons();
+
+  const lateTailSumCount = new Array(10).fill(0);
+  const lateTailSumLegal = new Array(10).fill(0);
+  const lateTailSumEmpty = new Array(10).fill(0);
+  const lateTailSumMergePairs = new Array(10).fill(0);
+  const lateTailSumMp7 = new Array(10).fill(0);
+  const lateTailSumMaxCorner = new Array(10).fill(0);
+  let lateLastMoveSampleCount = 0;
+  let lateLastMoveLegalLe1 = 0;
+  let lateLastMoveEmptyLe1 = 0;
+  let lateLastMoveMergePairsZero = 0;
+  let lateLastMoveMp7LtPoint5 = 0;
+  let lateLastMoveMaxNotCorner = 0;
+  const lateLastMoveChosenDir: Record<Direction, number> = {
+    UP: 0,
+    DOWN: 0,
+    LEFT: 0,
+    RIGHT: 0,
+  };
 
   for (let i = 0; i < n; i++) {
     const r = simulateOne(policy, rng, mode, extraRule);
@@ -390,20 +428,59 @@ export function runMonteCarlo(
     if (r.everHadAdjacent88ButNoImmediateMerge8) episodesEverAdjacent88NoImmediate8++;
     if (r.finalCanMerge7Now) episodesFinalCanMerge7Now++;
     if (r.finalCanMerge8Now) episodesFinalCanMerge8Now++;
-    if (r.everForcedLoss) episodesEverForcedLoss++;
-    if (r.everBlockedRequiredMerge4) episodesBlockedRequiredMerge4++;
-    if (r.everBlockedRequiredMerge5) episodesBlockedRequiredMerge5++;
-    if (r.everBlockedRequiredMerge6) episodesBlockedRequiredMerge6++;
-    if (r.everBlockedRequiredMerge7) episodesBlockedRequiredMerge7++;
-    if (r.finalForcedLoss) episodesFinalForcedLoss++;
-    sumPeakDeadSeverity += r.peakDeadSeverity;
-    sumFinalDeadSeverity += r.finalDeadSeverity;
-    sumPeakBlockedLevelsCount += r.peakBlockedLevelsCount;
-    sumFinalBlockedLevelsCount += r.finalBlockedLevelsCount;
-    if (r.everOne8One7WithForcedLoss) episodesOne8One7WithForcedLoss++;
-    if (r.everTwo7WithForcedLoss) episodesTwo7WithForcedLoss++;
     terminalReasons[r.terminalReason]++;
+    opts?.onEpisode?.(r, i);
+
+    for (const tm of r.tailMoves) {
+      const idx = tm.movesFromEnd - 1;
+      if (idx < 0 || idx > 9) continue;
+      lateTailSumCount[idx] += 1;
+      lateTailSumLegal[idx] += tm.legalCount;
+      lateTailSumEmpty[idx] += tm.emptyCount;
+      lateTailSumMergePairs[idx] += tm.mergePairs;
+      lateTailSumMp7[idx] += tm.mp7;
+      lateTailSumMaxCorner[idx] += tm.maxAtAnyCorner;
+    }
+    if (r.tailMoves.length > 0) {
+      const tl = r.tailMoves[r.tailMoves.length - 1]!;
+      if (tl.movesFromEnd === 1) {
+        lateLastMoveSampleCount++;
+        if (tl.legalCount <= 1) lateLastMoveLegalLe1++;
+        if (tl.emptyCount <= 1) lateLastMoveEmptyLe1++;
+        if (tl.mergePairs === 0) lateLastMoveMergePairsZero++;
+        if (tl.mp7 < 0.5) lateLastMoveMp7LtPoint5++;
+        if (tl.maxAtAnyCorner === 0) lateLastMoveMaxNotCorner++;
+        lateLastMoveChosenDir[tl.chosenDirection]++;
+      }
+    }
+
+    const done = i + 1;
+    const pe = opts?.progressEvery;
+    const onP = opts?.onProgress;
+    if (onP !== undefined && pe !== undefined) {
+      const every = Math.max(1, Math.floor(pe));
+      if (done === 1 || done % every === 0 || done === n) {
+        onP({ done, total: n, wins, stepSum });
+      }
+    }
   }
+
+  const lateTailSampleCount = lateTailSumCount.map((c) => c) as readonly number[];
+  const lateTailAvgLegal = lateTailSumCount.map((c, i) =>
+    c > 0 ? lateTailSumLegal[i]! / c : 0
+  ) as readonly number[];
+  const lateTailAvgEmpty = lateTailSumCount.map((c, i) =>
+    c > 0 ? lateTailSumEmpty[i]! / c : 0
+  ) as readonly number[];
+  const lateTailAvgMergePairs = lateTailSumCount.map((c, i) =>
+    c > 0 ? lateTailSumMergePairs[i]! / c : 0
+  ) as readonly number[];
+  const lateTailAvgMp7 = lateTailSumCount.map((c, i) =>
+    c > 0 ? lateTailSumMp7[i]! / c : 0
+  ) as readonly number[];
+  const lateTailFracMaxCorner = lateTailSumCount.map((c, i) =>
+    c > 0 ? lateTailSumMaxCorner[i]! / c : 0
+  ) as readonly number[];
 
   return {
     winRate: n > 0 ? wins / n : 0,
@@ -446,18 +523,19 @@ export function runMonteCarlo(
     episodesEverAdjacent88NoImmediate8,
     episodesFinalCanMerge7Now,
     episodesFinalCanMerge8Now,
-    episodesEverForcedLoss,
-    episodesBlockedRequiredMerge4,
-    episodesBlockedRequiredMerge5,
-    episodesBlockedRequiredMerge6,
-    episodesBlockedRequiredMerge7,
-    episodesFinalForcedLoss,
-    meanPeakDeadSeverity: n > 0 ? sumPeakDeadSeverity / n : 0,
-    meanFinalDeadSeverity: n > 0 ? sumFinalDeadSeverity / n : 0,
-    meanPeakBlockedLevelsCount: n > 0 ? sumPeakBlockedLevelsCount / n : 0,
-    meanFinalBlockedLevelsCount: n > 0 ? sumFinalBlockedLevelsCount / n : 0,
-    episodesOne8One7WithForcedLoss,
-    episodesTwo7WithForcedLoss,
+    lateTailSampleCount,
+    lateTailAvgLegal,
+    lateTailAvgEmpty,
+    lateTailAvgMergePairs,
+    lateTailAvgMp7,
+    lateTailFracMaxCorner,
+    lateLastMoveSampleCount,
+    lateLastMoveLegalLe1,
+    lateLastMoveEmptyLe1,
+    lateLastMoveMergePairsZero,
+    lateLastMoveMp7LtPoint5,
+    lateLastMoveMaxNotCorner,
+    lateLastMoveChosenDir: { ...lateLastMoveChosenDir },
   };
 }
 

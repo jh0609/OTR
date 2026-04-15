@@ -7,14 +7,31 @@
  * 미세한 승률보다 ever two 7s / 8+7 / peakSecondMax 등 구조가 우선.
  *
  * 옵션 예: SIM_SEED=7 SIM_N=5000 npm run sim
+ *
+ * 프로필(선택, SIM_SKIP_BASE_POLICIES보다 우선):
+ * - SIM_PROFILE=full | expectimax → expectimax 3종 MC 강제 실행
+ * - SIM_PROFILE=hint | quick     → expectimax 생략, 힌트만
+ * - SIM_FORCE_FULL=1             → 위와 무관하게 expectimax MC 실행
+ *
+ * - SIM_SKIP_BASE_POLICIES=1 → (프로필 없을 때) expectimax MC 생략, 힌트만
+ * - SIM_MC_PROGRESS_EVERY=500 → expectimax MC 중 N에피소드마다 진행 로그
+ * - SIM_HINT_DEPTH_EARLY / SIM_HINT_DEPTH_LATE → 힌트 탐색 깊이 (기본 5/10)
+ *
+ * expectimax MC 블록 출력에 마지막 최대 10수(tailMoves) 집계·실패 요인 요약이 포함됩니다.
+ *
+ * tail NDJSON(분석기용, expectimax MC만):
+ * - SIM_TAIL_JSONL=./out/tail-moves.jsonl → 스냅샷 1줄 1객체(보드 boardCells 포함). 기본은 파일 비우고 시작.
+ * - SIM_TAIL_APPEND=1 → 기존 파일에 이어 쓰기.
  */
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   runMonteCarlo,
   createRng,
   expectimaxPolicySelectiveLate3PlyExperimentC,
   expectimaxPolicySelectiveLate3PlyExperimentCWith78,
   expectimaxPolicySelectiveLate3PlyExperimentCWith78MergeTiming,
-  experimentCEndgameWith78MergeTiming,
+  mergeEndgameTuning,
   simulateOne,
   TERMINAL_REASONS,
   getHint,
@@ -24,6 +41,9 @@ import {
   slide,
   spawnRandom,
   type MonteCarloStats,
+  type MonteCarloProgressEvent,
+  type MonteCarloRunOptions,
+  type EpisodeResult,
   type Policy,
   type TerminalReason,
   type Direction,
@@ -32,7 +52,8 @@ import {
 
 const seed = Number(process.env.SIM_SEED ?? "42");
 /** 기본 5000 — 튜닝 스캔용. 긴 실행은 SIM_N=10000~20000 또는 그 이상. */
-const n = Number(process.env.SIM_N ?? "5000");
+const nParsed = Number(process.env.SIM_N ?? "5000");
+const n = Number.isFinite(nParsed) && nParsed >= 1 ? Math.floor(nParsed) : 5000;
 /** If "1", skip Monte Carlo blocks and run trace only. */
 const traceOnly = process.env.SIM_TRACE_ONLY === "1";
 /** Session cache windows for hint policy (simulation only). */
@@ -47,12 +68,114 @@ const simHintMaxMs = Number(process.env.SIM_HINT_MAX_MS ?? "500");
 const simHintMaxExpandedNodes = Number(process.env.SIM_HINT_MAX_EXPANDED_NODES ?? "0");
 const simHintMaxMsSweepRaw = process.env.SIM_HINT_MAX_MS_SWEEP ?? "";
 const simHintPrewarm = Number(process.env.SIM_HINT_PREWARM ?? "12");
+const simProfileRaw = (process.env.SIM_PROFILE ?? "").trim();
+const simProfileLower = simProfileRaw.toLowerCase();
+const simForceFull = process.env.SIM_FORCE_FULL === "1";
+const simSkipFromEnv = process.env.SIM_SKIP_BASE_POLICIES === "1";
+/** expectimax 3종 MC 생략 여부 — SIM_PROFILE / SIM_FORCE_FULL 이 SIM_SKIP_BASE_POLICIES보다 우선. */
+const simSkipBasePolicies =
+  simForceFull || simProfileLower === "full" || simProfileLower === "expectimax"
+    ? false
+    : simProfileLower === "hint" || simProfileLower === "quick"
+      ? true
+      : simSkipFromEnv;
+/** expectimax MC 진행 로그 간격(에피소드). 0이면 끔. */
+const simMcProgressEvery = Math.floor(Number(process.env.SIM_MC_PROGRESS_EVERY ?? "0"));
+/** tail 스냅샷+보드 NDJSON 경로(미설정이면 미기록). */
+const simTailJsonl = (process.env.SIM_TAIL_JSONL ?? "").trim();
+const simTailAppend = process.env.SIM_TAIL_APPEND === "1";
+function parseHintDepth(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) ? Math.max(0, n) : fallback;
+}
+
+const simHintDepthEarly = parseHintDepth(process.env.SIM_HINT_DEPTH_EARLY, 5);
+const simHintDepthLate = parseHintDepth(process.env.SIM_HINT_DEPTH_LATE, 10);
 
 const HIST_FOCUS = [4, 5, 6, 7, 8, 9] as const;
+
+type MakeHintPolicyOpts = {
+  maxMs?: number;
+};
+
+function normalizeMakeHintOpts(arg?: number | MakeHintPolicyOpts): { maxMs?: number } {
+  const defaultMaxMs = simHintMaxMs > 0 ? simHintMaxMs : undefined;
+  if (typeof arg === "number") {
+    return { maxMs: arg };
+  }
+  const o = arg ?? {};
+  return {
+    maxMs: o.maxMs !== undefined ? o.maxMs : defaultMaxMs,
+  };
+}
 
 function pct(x: number, total: number): string {
   if (total <= 0) return "0.00";
   return ((x / total) * 100).toFixed(2);
+}
+
+const DIR_PRINT_ORDER: Direction[] = ["UP", "DOWN", "LEFT", "RIGHT"];
+
+/** 마지막 10수 구간 평균 + 마지막 1수 직전 국면에서의 실패 요인 비율. */
+function printLateGameTailAnalysis(stats: MonteCarloStats, totalEpisodes: number): void {
+  console.log("    --- 극후반(마지막 최대 10수) ---");
+  console.log(
+    "      행: 종료 k수 전 직전 국면(k=1이 마지막으로 두기 직전). 열: 해당 깊이에서 표본이 있는 에피소드에 대한 평균/비율."
+  );
+  for (let k = 10; k >= 1; k--) {
+    const i = k - 1;
+    const sc = stats.lateTailSampleCount[i] ?? 0;
+    if (sc === 0) {
+      console.log(`      k=${k}: (표본 없음)`);
+      continue;
+    }
+    const leg = stats.lateTailAvgLegal[i]!.toFixed(2);
+    const emp = stats.lateTailAvgEmpty[i]!.toFixed(2);
+    const mp = stats.lateTailAvgMergePairs[i]!.toFixed(2);
+    const mp7 = stats.lateTailAvgMp7[i]!.toFixed(3);
+    const cr = (stats.lateTailFracMaxCorner[i]! * 100).toFixed(1);
+    console.log(
+      `      k=${k}  n=${sc} (${pct(sc, totalEpisodes)}%)  avgLegal=${leg} avgEmpty=${emp} avgMergePairs=${mp} avgMp7=${mp7} maxAtCorner%=${cr}`
+    );
+  }
+
+  const lm = stats.lateLastMoveSampleCount;
+  console.log("    --- 마지막 1수 직전(패망·승 직전) 요약 ---");
+  if (lm <= 0) {
+    console.log("      (표본 없음: 전부 0수 종료 등)");
+    return;
+  }
+  console.log(
+    `      표본 에피소드: ${lm}  legal≤1: ${pct(stats.lateLastMoveLegalLe1, lm)}%  empty≤1: ${pct(stats.lateLastMoveEmptyLe1, lm)}%`
+  );
+  console.log(
+    `      mergePairs=0: ${pct(stats.lateLastMoveMergePairsZero, lm)}%  mp7<0.5: ${pct(stats.lateLastMoveMp7LtPoint5, lm)}%  max∉구석: ${pct(stats.lateLastMoveMaxNotCorner, lm)}%`
+  );
+  const dirParts = DIR_PRINT_ORDER.map(
+    (d) => `${d}=${stats.lateLastMoveChosenDir[d] ?? 0}`
+  );
+  console.log(`      선택 방향(빈도): ${dirParts.join("  ")}`);
+  console.log("      해석 힌트: legal·empty가 바닥이면 ‘움직임 자체가 줄어드는 포화’, mp7이 낮으면 ‘7머지 전환 여지 부족’, max가 구석 밖이면 ‘무게중심이 흐트러진 막판’에 가깝습니다.");
+}
+
+function printSimConfigSummary(): void {
+  if (traceOnly) return;
+  console.log("\n=== run-sim 적용 설정 ===");
+  console.log(`  SIM_N=${n}  SIM_SEED=${seed}`);
+  console.log(
+    `  SIM_PROFILE=${simProfileRaw || "(없음)"}  SIM_FORCE_FULL=${simForceFull ? "1" : "0"}  SIM_SKIP_BASE_POLICIES=${simSkipFromEnv ? "1" : "0"}`
+  );
+  console.log(`  expectimax 3정책 Monte Carlo: ${simSkipBasePolicies ? "생략" : "실행"}`);
+  console.log(`  SIM_HINT_MAX_MS=${simHintMaxMs}  SIM_HINT_DEPTH_EARLY/LATE=${simHintDepthEarly}/${simHintDepthLate}`);
+  if (simMcProgressEvery > 0) console.log(`  SIM_MC_PROGRESS_EVERY=${simMcProgressEvery}`);
+  if (simHintProgressEvery > 0) console.log(`  SIM_HINT_PROGRESS_EVERY=${simHintProgressEvery}`);
+  if (simTailJsonl)
+    console.log(`  SIM_TAIL_JSONL=${simTailJsonl}  SIM_TAIL_APPEND=${simTailAppend ? "1" : "0"}`);
+  if (!Number.isFinite(nParsed) || nParsed < 1) {
+    console.log(`  (참고) SIM_N 비정상 값 → ${n}으로 클램프`);
+  }
+  console.log("");
 }
 
 function printHistogramRange(
@@ -130,18 +253,6 @@ function printStructureSummaryBlock(
   line("ever adj8+8 no imm8", (s) => `${s.episodesEverAdjacent88NoImmediate8} (${pct(s.episodesEverAdjacent88NoImmediate8, totalEpisodes)}%)`);
   line("final canMerge7Now", (s) => `${s.episodesFinalCanMerge7Now} (${pct(s.episodesFinalCanMerge7Now, totalEpisodes)}%)`);
   line("final canMerge8Now", (s) => `${s.episodesFinalCanMerge8Now} (${pct(s.episodesFinalCanMerge8Now, totalEpisodes)}%)`);
-  line("ever forcedLoss flagged", (s) => `${s.episodesEverForcedLoss} (${pct(s.episodesEverForcedLoss, totalEpisodes)}%)`);
-  line("blocked req merge L4", (s) => `${s.episodesBlockedRequiredMerge4} (${pct(s.episodesBlockedRequiredMerge4, totalEpisodes)}%)`);
-  line("blocked req merge L5", (s) => `${s.episodesBlockedRequiredMerge5} (${pct(s.episodesBlockedRequiredMerge5, totalEpisodes)}%)`);
-  line("blocked req merge L6", (s) => `${s.episodesBlockedRequiredMerge6} (${pct(s.episodesBlockedRequiredMerge6, totalEpisodes)}%)`);
-  line("blocked req merge L7", (s) => `${s.episodesBlockedRequiredMerge7} (${pct(s.episodesBlockedRequiredMerge7, totalEpisodes)}%)`);
-  line("final forcedLoss", (s) => `${s.episodesFinalForcedLoss} (${pct(s.episodesFinalForcedLoss, totalEpisodes)}%)`);
-  line("mean peak dead severity", (s) => s.meanPeakDeadSeverity.toFixed(3));
-  line("mean final dead severity", (s) => s.meanFinalDeadSeverity.toFixed(3));
-  line("mean peak blockedLevels", (s) => s.meanPeakBlockedLevelsCount.toFixed(3));
-  line("mean final blockedLevels", (s) => s.meanFinalBlockedLevelsCount.toFixed(3));
-  line("one8+one7 + forcedLoss", (s) => `${s.episodesOne8One7WithForcedLoss} (${pct(s.episodesOne8One7WithForcedLoss, totalEpisodes)}%)`);
-  line("two7s + forcedLoss", (s) => `${s.episodesTwo7WithForcedLoss} (${pct(s.episodesTwo7WithForcedLoss, totalEpisodes)}%)`);
   line("ever max8+second6", (s) => `${s.episodesEverMax8Second6} (${pct(s.episodesEverMax8Second6, totalEpisodes)}%)`);
   line("ever max8+second7", (s) => `${s.episodesEverMax8Second7} (${pct(s.episodesEverMax8Second7, totalEpisodes)}%)`);
   line("mp7>0 while max≥8 (episodes)", (s) => `${s.episodesEverMp7PositiveWhileMaxGte8} (${pct(s.episodesEverMp7PositiveWhileMaxGte8, totalEpisodes)}%)`);
@@ -220,35 +331,6 @@ function printMonteCarloStats(stats: MonteCarloStats, totalEpisodes: number): vo
   console.log(
     `    final canMerge8Now: ${stats.episodesFinalCanMerge8Now} (${pct(stats.episodesFinalCanMerge8Now, totalEpisodes)}%)`
   );
-  console.log("    --- dead-state diagnostics ---");
-  console.log(
-    `    episodes flagged forcedLoss at some turn: ${stats.episodesEverForcedLoss} (${pct(stats.episodesEverForcedLoss, totalEpisodes)}%)`
-  );
-  console.log(
-    `    episodes with blocked required merge level 4: ${stats.episodesBlockedRequiredMerge4} (${pct(stats.episodesBlockedRequiredMerge4, totalEpisodes)}%)`
-  );
-  console.log(
-    `    episodes with blocked required merge level 5: ${stats.episodesBlockedRequiredMerge5} (${pct(stats.episodesBlockedRequiredMerge5, totalEpisodes)}%)`
-  );
-  console.log(
-    `    episodes with blocked required merge level 6: ${stats.episodesBlockedRequiredMerge6} (${pct(stats.episodesBlockedRequiredMerge6, totalEpisodes)}%)`
-  );
-  console.log(
-    `    episodes with blocked required merge level 7: ${stats.episodesBlockedRequiredMerge7} (${pct(stats.episodesBlockedRequiredMerge7, totalEpisodes)}%)`
-  );
-  console.log(
-    `    final board forcedLoss: ${stats.episodesFinalForcedLoss} (${pct(stats.episodesFinalForcedLoss, totalEpisodes)}%)`
-  );
-  console.log(`    mean peak dead severity: ${stats.meanPeakDeadSeverity.toFixed(4)}`);
-  console.log(`    mean final dead severity: ${stats.meanFinalDeadSeverity.toFixed(4)}`);
-  console.log(`    mean peak blockedLevels: ${stats.meanPeakBlockedLevelsCount.toFixed(4)}`);
-  console.log(`    mean final blockedLevels: ${stats.meanFinalBlockedLevelsCount.toFixed(4)}`);
-  console.log(
-    `    episodes with one 8 + one 7 + forcedLoss: ${stats.episodesOne8One7WithForcedLoss} (${pct(stats.episodesOne8One7WithForcedLoss, totalEpisodes)}%)`
-  );
-  console.log(
-    `    episodes with two 7s + forcedLoss: ${stats.episodesTwo7WithForcedLoss} (${pct(stats.episodesTwo7WithForcedLoss, totalEpisodes)}%)`
-  );
   console.log(
     `    ever max8+second6 snapshot: ${stats.episodesEverMax8Second6} (${pct(stats.episodesEverMax8Second6, totalEpisodes)}%)`
   );
@@ -267,6 +349,7 @@ function printMonteCarloStats(stats: MonteCarloStats, totalEpisodes: number): vo
   );
   console.log(`    mean peak mergePotential(7): ${stats.meanPeakMergePotential7.toFixed(4)}`);
   console.log(`    mean final mergePotential(7): ${stats.meanFinalMergePotential7.toFixed(4)}`);
+  printLateGameTailAnalysis(stats, totalEpisodes);
   console.log(
     `    peak count(8)≥2 at some turn: ${stats.episodesPeakCount8AtLeast2} (${pct(stats.episodesPeakCount8AtLeast2, totalEpisodes)}%)`
   );
@@ -298,10 +381,17 @@ function printMonteCarloStats(stats: MonteCarloStats, totalEpisodes: number): vo
 }
 
 if (!traceOnly) {
-  console.log(`Monte Carlo (episodes=${n}, seed=${seed}, mode=standard)\n`);
-  console.log(
-    "  정책: selective late 3-ply + scoreBoardV3. 비교 — (1) C  (2) C+78  (3) C+78 + merge timing\n"
-  );
+  printSimConfigSummary();
+  if (!simSkipBasePolicies) {
+    console.log(`Monte Carlo (episodes=${n}, seed=${seed}, mode=standard)\n`);
+    console.log(
+      "  정책: selective late 3-ply + scoreBoardV3. 비교 — (1) C  (2) C+78  (3) C+78 + merge timing\n"
+    );
+  } else {
+    console.log(
+      `힌트 전용 실행 (SIM_SKIP_BASE_POLICIES=1, episodes=${n}, seed=${seed})\n`
+    );
+  }
 }
 
 const policies: { name: string; label: string; p: Policy }[] = [
@@ -316,14 +406,86 @@ const policies: { name: string; label: string; p: Policy }[] = [
 
 const summaryRows: { label: string; stats: MonteCarloStats }[] = [];
 
-if (!traceOnly) {
-  for (const { name, label, p } of policies) {
-    console.log(`  ${name}`);
-    const stats = runMonteCarlo(p, n, seed, "standard");
-    summaryRows.push({ label, stats });
-    printMonteCarloStats(stats, n);
-    console.log("");
+function makeMonteCarloProgressOpts(
+  label: string
+): { progressEvery: number; onProgress: (e: MonteCarloProgressEvent) => void } | undefined {
+  if (simSkipBasePolicies || simMcProgressEvery <= 0) return undefined;
+  return {
+    progressEvery: simMcProgressEvery,
+    onProgress(e: MonteCarloProgressEvent) {
+      const wr = ((e.wins / e.done) * 100).toFixed(2);
+      const avg = (e.stepSum / e.done).toFixed(2);
+      console.log(`    [MC ${label}] ${e.done}/${e.total} winRate=${wr}% avgSteps=${avg}`);
+    },
+  };
+}
+
+function createTailJsonlWriter(
+  policyLabel: string,
+  fd: number,
+  seedVal: number
+): (r: EpisodeResult, ep: number) => void {
+  return (r, ep) => {
+    for (const tm of r.tailMoves) {
+      const row = {
+        policy: policyLabel,
+        seed: seedVal,
+        episode: ep,
+        episodeSteps: r.steps,
+        win: r.win,
+        terminalReason: r.terminalReason,
+        movesFromEnd: tm.movesFromEnd,
+        legalCount: tm.legalCount,
+        emptyCount: tm.emptyCount,
+        maxLevel: tm.maxLevel,
+        secondMax: tm.secondMax,
+        mergePairs: tm.mergePairs,
+        mp7: tm.mp7,
+        maxAtAnyCorner: tm.maxAtAnyCorner,
+        chosenDirection: tm.chosenDirection,
+        boardCells: [...tm.boardCells],
+      };
+      // 단일 FD + writeSync: Windows에서 매 수 appendFileSync(open/close) 시 EBUSY가 날 수 있음
+      fs.writeSync(fd, `${JSON.stringify(row)}\n`);
+    }
+  };
+}
+
+function combineMonteCarloOpts(
+  label: string,
+  onEpisode?: (r: EpisodeResult, ep: number) => void
+): MonteCarloRunOptions | undefined {
+  const prog = makeMonteCarloProgressOpts(label);
+  if (!prog && !onEpisode) return undefined;
+  return { ...(prog ?? {}), ...(onEpisode ? { onEpisode } : {}) };
+}
+
+let tailWriteFd: number | undefined;
+if (!traceOnly && !simSkipBasePolicies && simTailJsonl) {
+  const abs = path.resolve(simTailJsonl);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  tailWriteFd = fs.openSync(abs, simTailAppend ? "a" : "w");
+  console.log(`  (보내기) tail 무브 NDJSON → ${abs}${simTailAppend ? " (이어쓰기)" : ""}\n`);
+}
+
+if (!traceOnly && !simSkipBasePolicies) {
+  try {
+    for (const { name, label, p } of policies) {
+      console.log(`  ${name}`);
+      const tailWriter =
+        simTailJsonl.length > 0 && tailWriteFd !== undefined
+          ? createTailJsonlWriter(label, tailWriteFd, seed)
+          : undefined;
+      const stats = runMonteCarlo(p, n, seed, "standard", undefined, combineMonteCarloOpts(label, tailWriter));
+      summaryRows.push({ label, stats });
+      printMonteCarloStats(stats, n);
+      console.log("");
+    }
+  } finally {
+    if (tailWriteFd !== undefined) fs.closeSync(tailWriteFd);
   }
+} else if (!traceOnly && simSkipBasePolicies) {
+  console.log("  (건너뜀) expectimax 3종 Monte Carlo — SIM_SKIP_BASE_POLICIES=1\n");
 }
 
 type LiteStats = {
@@ -395,8 +557,8 @@ function runMonteCarloFreshPolicy(
     if (done % progressEvery === 0 || done === episodes) {
       const wr = ((wins / done) * 100).toFixed(2);
       const avg = (stepsSum / done).toFixed(2);
-      const rs = latestHintRuntimeStats;
-      if (rs && rs.calls > 0) {
+      const rs = latestHintRuntimeStats as HintRuntimeStats | null;
+      if (rs !== null && rs.calls > 0) {
         const hitRate = (rs.cacheHits / (rs.cacheHits + rs.expandedNodes)) * 100;
         console.log(
           `    [HINT progress] ${done}/${episodes} winRate=${wr}% avgSteps=${avg} hitRate=${Number.isFinite(hitRate) ? hitRate.toFixed(2) : "0.00"}% cache=${rs.lastValueCacheSize}/${rs.lastLeafCacheSize}/${rs.lastSlideCacheSize}`
@@ -414,7 +576,8 @@ function runMonteCarloFreshPolicy(
   };
 }
 
-function makeHintPolicyFromGetHint(overrideMaxMs?: number): Policy {
+function makeHintPolicyFromGetHint(arg?: number | MakeHintPolicyOpts): Policy {
+  const { maxMs } = normalizeMakeHintOpts(arg);
   // Keep caches alive across episodes for session-level reuse.
   const valueCache = new Map<string, number>();
   const leafScoreCache = new Map<string, number>();
@@ -438,35 +601,11 @@ function makeHintPolicyFromGetHint(overrideMaxMs?: number): Policy {
   return (board, actions) => {
     const t0 = Date.now();
     const hint = getHint(board, {
-      tuning: {
-        ...experimentCEndgameWith78MergeTiming,
-        active7MergeBonus: 1800,
-        mergePotential7Weight: 820,
-        deltaMergePotential7Weight: 1100,
-        mergeNow7Bonus: 5200,
-        mergeNow8Bonus: 26000,
-        deferMerge7Penalty: 1200,
-        deferMerge8Penalty: 3600,
-        deltaImmediateMerge7Gain: 2800,
-        deltaImmediateMerge7Loss: 3600,
-        deltaImmediateMerge8Gain: 11000,
-        deltaImmediateMerge8Loss: 15000,
-        adjacent77Bonus: 1200,
-        separatedTwo7Penalty: 800,
-        two7DistancePenaltyWeight: 900,
-        highLevelNoMergePenalty: 2400,
-        highLevelNoMergePerTilePenalty: 900,
-        highLevelNoMergeLowEmptyPenalty: 1300,
-        highLevelEmptyCellReward: 160,
-        // Stronger snake/rebuild bias once 8+7 endgame starts.
-        endgame78Weight: 320,
-        rebuildWeight: 240,
-        deltaRebuildPreferenceWeight: 260,
-      },
+      tuning: mergeEndgameTuning({ rebuildWeight: 240 }),
       lateThreshold: 7,
-      depthEarly: 5,
+      depthEarly: simHintDepthEarly,
       beamWidthEarly: 8,
-      depthLate: 10,
+      depthLate: simHintDepthLate,
       beamWidthLate: 14,
       valueCache,
       leafScoreCache,
@@ -477,7 +616,7 @@ function makeHintPolicyFromGetHint(overrideMaxMs?: number): Policy {
       maxValueCacheSize: Math.max(1000, Math.floor(simMaxValueCache)),
       maxLeafScoreCacheSize: Math.max(1000, Math.floor(simMaxLeafCache)),
       maxSlidePenaltyCacheSize: Math.max(1000, Math.floor(simMaxSlideCache)),
-      maxMs: overrideMaxMs ?? (simHintMaxMs > 0 ? simHintMaxMs : undefined),
+      maxMs,
       maxExpandedNodes:
         simHintMaxExpandedNodes > 0 ? Math.floor(simHintMaxExpandedNodes) : undefined,
       includeDebug: true,
@@ -505,8 +644,8 @@ function runHintExperiment(label: string, makePolicy: () => Policy): void {
   console.log(`    winRate: ${(hintLite.winRate * 100).toFixed(4)}%`);
   console.log(`    avgSteps: ${hintLite.avgSteps.toFixed(2)}`);
   console.log(`    terminalReasons: ${Object.entries(hintLite.terminalReasons).map(([k, v]) => `${k}=${v}`).join("  ")}`);
-  const rs = latestHintRuntimeStats;
-  if (rs && rs.calls > 0) {
+  const rs = latestHintRuntimeStats as HintRuntimeStats | null;
+  if (rs !== null && rs.calls > 0) {
     const hitRate = (rs.cacheHits / (rs.cacheHits + rs.expandedNodes)) * 100;
     const sortedMs = [...rs.hintMsSamples].sort((a, b) => a - b);
     const p50 = percentile(sortedMs, 0.5);
@@ -536,41 +675,42 @@ function runHintExperiment(label: string, makePolicy: () => Policy): void {
 
 if (!traceOnly) {
   console.log("  (추가) hint(getHint) 정책 — 에피소드 내부 캐시 재사용\n");
-  runHintExperiment("HINT (getHint, tuned like GameScene)", () => makeHintPolicyFromGetHint());
+  runHintExperiment("HINT (getHint, GameScene과 동일 endgame 튜닝)", () => makeHintPolicyFromGetHint());
 
   const msSweep = parseMsSweep(simHintMaxMsSweepRaw);
   if (msSweep.length > 0) {
     console.log("  (추가) HINT maxMs sweep\n");
     for (const ms of msSweep) {
-      runHintExperiment(`HINT sweep (maxMs=${ms})`, () => makeHintPolicyFromGetHint(ms));
+      runHintExperiment(`HINT sweep (maxMs=${ms})`, () => makeHintPolicyFromGetHint({ maxMs: ms }));
     }
   }
 
-  printStructureSummaryBlock(summaryRows, n);
-  console.log(
-    "  참고: ever two 8s가 0을 벗어나면, 그때부터 승률·최종 강화 실험을 별도로 진행해도 된다.\n"
-  );
+  if (summaryRows.length > 0) {
+    printStructureSummaryBlock(summaryRows, n);
+    console.log(
+      "  참고: ever two 8s가 0을 벗어나면, 그때부터 승률·최종 강화 실험을 별도로 진행해도 된다.\n"
+    );
+  }
 
-  console.log("단일 에피소드 예시 (C+78, seed=42):");
-  const one = simulateOne(expectimaxPolicySelectiveLate3PlyExperimentCWith78, createRng(42), "standard");
-  console.log(
-    `  win=${one.win} steps=${one.steps} terminalReason=${one.terminalReason} maxPeak=${one.maxLevelReached} finalMax=${one.finalMaxLevel}`
-  );
-  console.log(
-    `  final secondMax=${one.finalSecondMaxTile} peak2nd=${one.peakSecondMaxTile} top2Gap=${one.finalTop2Gap} final#8=${one.finalCountTilesEq8} final#≥7=${one.finalCountTilesGe7} peak#8max=${one.peakCount8}`
-  );
-  console.log(
-    `  ever: two7s=${one.everHadTwoSevensSimultaneous} one8+one7=${one.everHadOne8AndOne7Simultaneous} two8s=${one.everHadTwo8sSimultaneous} max8+sec6=${one.everHadMax8Second6} max8+sec7=${one.everHadMax8Second7}`
-  );
-  console.log(
-    `  peak count≥7=${one.peakCountGe7} peak top2sum=${one.peakTopTwoSum} final one8+one7=${one.finalHasOne8AndOne7}`
-  );
-  console.log(
-    `  mp7: peak=${one.peakMergePotential7.toFixed(3)} final=${one.finalMergePotential7.toFixed(3)} mp7+|max≥8=${one.everHadMp7PositiveWhileMaxGte8} 8+7&mp7+=${one.everHadMax8Second7WithMp7Positive} 8+7&mp7=0=${one.everHadMax8Second7WithMp7Zero}`
-  );
-  console.log(
-    `  dead: everForcedLoss=${one.everForcedLoss} finalForcedLoss=${one.finalForcedLoss} peakDeadSeverity=${one.peakDeadSeverity.toFixed(3)} finalDeadSeverity=${one.finalDeadSeverity.toFixed(3)}`
-  );
+  if (!simSkipBasePolicies) {
+    console.log("단일 에피소드 예시 (C+78, seed=42):");
+    const one = simulateOne(expectimaxPolicySelectiveLate3PlyExperimentCWith78, createRng(42), "standard");
+    console.log(
+      `  win=${one.win} steps=${one.steps} terminalReason=${one.terminalReason} maxPeak=${one.maxLevelReached} finalMax=${one.finalMaxLevel}`
+    );
+    console.log(
+      `  final secondMax=${one.finalSecondMaxTile} peak2nd=${one.peakSecondMaxTile} top2Gap=${one.finalTop2Gap} final#8=${one.finalCountTilesEq8} final#≥7=${one.finalCountTilesGe7} peak#8max=${one.peakCount8}`
+    );
+    console.log(
+      `  ever: two7s=${one.everHadTwoSevensSimultaneous} one8+one7=${one.everHadOne8AndOne7Simultaneous} two8s=${one.everHadTwo8sSimultaneous} max8+sec6=${one.everHadMax8Second6} max8+sec7=${one.everHadMax8Second7}`
+    );
+    console.log(
+      `  peak count≥7=${one.peakCountGe7} peak top2sum=${one.peakTopTwoSum} final one8+one7=${one.finalHasOne8AndOne7}`
+    );
+    console.log(
+      `  mp7: peak=${one.peakMergePotential7.toFixed(3)} final=${one.finalMergePotential7.toFixed(3)} mp7+|max≥8=${one.everHadMp7PositiveWhileMaxGte8} 8+7&mp7+=${one.everHadMax8Second7WithMp7Positive} 8+7&mp7=0=${one.everHadMax8Second7WithMp7Zero}`
+    );
+  }
 }
 
 function fmtBoard(board: Board): string {
@@ -617,8 +757,8 @@ function simulateOneWithTrace(policy: Policy, rng: () => number, maxSteps: numbe
     console.log(`[TRACE] after spawn`);
     console.log(fmtBoard(board));
     if (progressEvery > 0 && step % progressEvery === 0) {
-      const rs = latestHintRuntimeStats;
-      if (rs && rs.calls > 0) {
+      const rs = latestHintRuntimeStats as HintRuntimeStats | null;
+      if (rs !== null && rs.calls > 0) {
         const hitRate = (rs.cacheHits / (rs.cacheHits + rs.expandedNodes)) * 100;
         console.log(
           `[TRACE progress] step=${step} calls=${rs.calls} hitRate=${Number.isFinite(hitRate) ? hitRate.toFixed(2) : "0.00"}% cache=${rs.lastValueCacheSize}/${rs.lastLeafCacheSize}/${rs.lastSlideCacheSize}`
@@ -641,8 +781,9 @@ if (process.env.SIM_TRACE === "1") {
       ? Number.POSITIVE_INFINITY
       : Math.max(1, Number(rawMax));
   simulateOneWithTrace(makeHintPolicyFromGetHint(), traceRng, maxSteps);
-  const rs = latestHintRuntimeStats;
-  if (rs && rs.calls > 0) {
+  // TS는 클로저 밖 let에 대한 콜백 내 할당을 추적하지 못함 → 읽기 시 단언
+  const rs = latestHintRuntimeStats as HintRuntimeStats | null;
+  if (rs !== null && rs.calls > 0) {
     const hitRate = (rs.cacheHits / (rs.cacheHits + rs.expandedNodes)) * 100;
     console.log(
       `\n[TRACE] cache/runtime calls=${rs.calls} expanded=${rs.expandedNodes} hits=${rs.cacheHits} hitRate=${Number.isFinite(hitRate) ? hitRate.toFixed(2) : "0.00"}%`

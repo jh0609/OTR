@@ -9,7 +9,7 @@ import { spawnAll } from "./spawn";
 import { legalActions } from "./legal";
 import { isTerminal } from "./terminal";
 import { scoreBoardV3 } from "./scoringV3";
-import { analyzeLateDeadState, lateGameSlidePenalty } from "./boardStats";
+import { lateGameSlidePenalty } from "./boardStats";
 import type { EndgameTuning, EndgameTuningConfig } from "./endgameTuning";
 import { mergeEndgameTuning } from "./endgameTuning";
 
@@ -55,8 +55,6 @@ export type HintSearchConfig = {
   prewarmNodeExpansions?: number;
   /** searchContext 노드 상한. 초과 시 cold node eviction 수행. */
   contextMaxNodes?: number;
-  /** 후반 dead-state forcedLoss면 확장을 중단하고 낮은 값으로 처리 */
-  enableDeadStatePrune?: boolean;
 };
 
 /** 기본 상한 — 메모리 폭주 방지용 슬라이딩 윈도우에 가깝게 동작. */
@@ -334,8 +332,6 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
   const startMs = Date.now();
   const maxMs = config?.maxMs;
   const maxExpandedNodes = config?.maxExpandedNodes;
-  const enableDeadStatePrune = config?.enableDeadStatePrune ?? true;
-
   function shouldCutoff(): boolean {
     if (maxExpandedNodes !== undefined && expandedNodes >= maxExpandedNodes) {
       budgetCutoff = true;
@@ -405,10 +401,6 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
     if (isTerminal(b, "standard")) {
       return TERMINAL_LOSS;
     }
-    if (enableDeadStatePrune && maxTileLevel(b) >= 7) {
-      const dead = analyzeLateDeadState(b);
-      if (dead.forcedLoss) return TERMINAL_LOSS + 10_000 * (1 - dead.severity);
-    }
     if (d <= 0) {
       return leafScore(b);
     }
@@ -433,12 +425,6 @@ export function getHint(board: Board, config?: HintSearchConfig): HintResult {
     const pen = slidePenalty(b, next);
     if (win) {
       return pen + leafScore(next);
-    }
-    if (enableDeadStatePrune && maxTileLevel(next) >= 7) {
-      const deadNext = analyzeLateDeadState(next);
-      if (deadNext.forcedLoss) {
-        return pen + TERMINAL_LOSS + 5_000 * (1 - deadNext.severity);
-      }
     }
     const outs = spawnAll(next);
     const chanceChildren = outs.map((s) => hintNodeKey("MAX", s, Math.max(0, d - 1)));
