@@ -2,8 +2,11 @@ import type { Board } from "./types";
 import { maxTileLevel } from "./board";
 import { secondMaxTile, areAdjacent } from "./boardStats";
 import { slide } from "./slide";
+import { SNAKE_PATH_INDICES } from "./scoring";
 
-export const HL_CONVERSION_BONUS = 1000;
+export const HL_CONVERSION_BONUS_WEAK = 800;
+export const HL_CONVERSION_BONUS_STRONG = 1200;
+export const HL_CONVERSION_BONUS_PREMIUM = 1800;
 
 export type TopEndPairability = {
   top2OrthAdj: boolean;
@@ -16,6 +19,13 @@ function cellsAtLevel(board: Board, level: number): number[] {
     if (board[i] === level) out.push(i);
   }
   return out;
+}
+
+function pathOrd(cell: number): number {
+  for (let i = 0; i < SNAKE_PATH_INDICES.length; i++) {
+    if (SNAKE_PATH_INDICES[i] === cell) return i;
+  }
+  return -1;
 }
 
 function hasMergeAtLeastLevel(before: Board, afterSlide: Board, minLevel: number): boolean {
@@ -87,9 +97,28 @@ export function createsHighLevelMerge(before: Board, afterSlide: Board): boolean
   return maxAfter > maxBefore && maxAfter >= 6;
 }
 
-export function hlConversionBonus(before: Board, afterSlide: Board): number {
-  if (isHighLevelPairable(before) && createsHighLevelMerge(before, afterSlide)) {
-    return HL_CONVERSION_BONUS;
+export function getMaxTileGap(board: Board): number {
+  return maxTileLevel(board) - secondMaxTile(board);
+}
+
+export function hasSecondMaxNearHead(board: Board): boolean {
+  const second = secondMaxTile(board);
+  if (second === 0) return false;
+  for (const idx of cellsAtLevel(board, second)) {
+    if (pathOrd(idx) <= 2) return true;
   }
-  return 0;
+  return false;
+}
+
+export function adaptiveHlConversionBonus(before: Board, afterSlide: Board): number {
+  if (!isHighLevelPairable(before)) return 0;
+  if (!createsHighLevelMerge(before, afterSlide)) return 0;
+  const pairability = getTopEndPairability(before);
+  if (pairability.top2OrthAdj && getMaxTileGap(before) <= 1 && hasSecondMaxNearHead(before)) {
+    return HL_CONVERSION_BONUS_PREMIUM;
+  }
+  if (pairability.top2OrthAdj) {
+    return HL_CONVERSION_BONUS_STRONG;
+  }
+  return HL_CONVERSION_BONUS_WEAK;
 }

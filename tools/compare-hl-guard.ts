@@ -15,6 +15,11 @@ import {
 import { maxTileLevel } from "../src/sim/board.ts";
 import { secondMaxTile, areAdjacent } from "../src/sim/boardStats.ts";
 import { isDeadish } from "../src/sim/survivalFeatures.ts";
+import {
+  adaptiveHlConversionBonus,
+  createsHighLevelMerge,
+  isHighLevelPairable,
+} from "../src/sim/topEndPairability.ts";
 
 const DIR_ORDER: Direction[] = ["UP", "DOWN", "LEFT", "RIGHT"];
 const N = Math.max(1, Number(process.env.SIM_MINIMAL_N ?? "5000"));
@@ -57,6 +62,57 @@ function baselineMinimalPolicy(board: Board, actions: Direction[]): Direction {
   }
   return actions[0]!;
 }
+
+function fixedHlBonus(before: Board, afterSlide: Board, bonus: number): number {
+  if (isHighLevelPairable(before) && createsHighLevelMerge(before, afterSlide)) return bonus;
+  return 0;
+}
+
+function fixedBonusPolicyFactory(bonus: number): Policy {
+  return (board, actions) => {
+    let bestScore = Number.NEGATIVE_INFINITY;
+    const tied: Direction[] = [];
+    for (const d of actions) {
+      const { next, win, moved } = slide(board, d);
+      if (win) return d;
+      if (!moved) continue;
+      const s = scoreBoardMinimal(next) + fixedHlBonus(board, next, bonus);
+      if (s > bestScore) {
+        bestScore = s;
+        tied.length = 0;
+        tied.push(d);
+      } else if (s === bestScore) {
+        tied.push(d);
+      }
+    }
+    for (const d of DIR_ORDER) {
+      if (tied.includes(d)) return d;
+    }
+    return actions[0]!;
+  };
+}
+
+const adaptiveBonusPolicy: Policy = (board, actions) => {
+  let bestScore = Number.NEGATIVE_INFINITY;
+  const tied: Direction[] = [];
+  for (const d of actions) {
+    const { next, win, moved } = slide(board, d);
+    if (win) return d;
+    if (!moved) continue;
+    const s = scoreBoardMinimal(next) + adaptiveHlConversionBonus(board, next);
+    if (s > bestScore) {
+      bestScore = s;
+      tied.length = 0;
+      tied.push(d);
+    } else if (s === bestScore) {
+      tied.push(d);
+    }
+  }
+  for (const d of DIR_ORDER) {
+    if (tied.includes(d)) return d;
+  }
+  return actions[0]!;
+};
 
 function cellsAtLevel(board: Board, level: number): number[] {
   const out: number[] = [];
@@ -283,38 +339,47 @@ function line(label: string, base: number, guard: number, percent = false): stri
   return `${label}: baseline=${b} | guarded=${g} | delta=${ds}`;
 }
 
+function printVariant(name: string, base: Agg, v: Agg): void {
+  const bConv = base.opp ? base.oppConv / base.opp : 0;
+  const vConv = v.opp ? v.oppConv / v.opp : 0;
+  const bType2 = base.noneRuns ? base.type2Runs / base.noneRuns : 0;
+  const vType2 = v.noneRuns ? v.type2Runs / v.noneRuns : 0;
+  const bFirstDeadish = base.firstDeadishCount ? base.firstDeadishSum / base.firstDeadishCount : 0;
+  const vFirstDeadish = v.firstDeadishCount ? v.firstDeadishSum / v.firstDeadishCount : 0;
+  const bTurns = base.turnsSum / base.episodes;
+  const vTurns = v.turnsSum / v.episodes;
+  const bMax = base.finalMaxSum / base.episodes;
+  const vMax = v.finalMaxSum / v.episodes;
+  const bSecond = base.finalSecondSum / base.episodes;
+  const vSecond = v.finalSecondSum / v.episodes;
+  const bWin = base.wins / base.episodes;
+  const vWin = v.wins / v.episodes;
+
+  console.log(`\n=== ${name} vs baseline ===`);
+  console.log(line("opportunity당 HL conversion rate", bConv, vConv, true));
+  console.log(line("Type2 interception 비율 (conv none run 기준)", bType2, vType2, true));
+  console.log(line("firstDeadishTurn 평균(관측된 에피소드만)", bFirstDeadish, vFirstDeadish));
+  console.log(line("turns 평균", bTurns, vTurns));
+  console.log(line("final maxTile 평균", bMax, vMax));
+  console.log(line("final secondMaxTile 평균", bSecond, vSecond));
+  console.log(line("win rate", bWin, vWin, true));
+  console.log(
+    `raw ${name}: oppConv=${v.oppConv}/${v.opp} type2=${v.type2Runs}/${v.noneRuns} wins=${v.wins}/${v.episodes}`
+  );
+}
+
 console.log(`SIM_MINIMAL_N=${N} seeds=${SEEDS.join(",")} policy=${POLICY_LABEL}`);
 const baseline = runVariant("baseline", baselineMinimalPolicy);
-const guarded = runVariant("guarded", minimalPolicy);
+const fixed1000 = runVariant("fixed1000", fixedBonusPolicyFactory(1000));
+const fixed2000 = runVariant("fixed2000", fixedBonusPolicyFactory(2000));
+const adaptive = runVariant("adaptive800_1200_1800", adaptiveBonusPolicy);
+const minimalCurrent = runVariant("minimalPolicy(current)", minimalPolicy);
 
-const bConv = baseline.opp ? baseline.oppConv / baseline.opp : 0;
-const gConv = guarded.opp ? guarded.oppConv / guarded.opp : 0;
-const bType2 = baseline.noneRuns ? baseline.type2Runs / baseline.noneRuns : 0;
-const gType2 = guarded.noneRuns ? guarded.type2Runs / guarded.noneRuns : 0;
-const bFirstDeadish = baseline.firstDeadishCount ? baseline.firstDeadishSum / baseline.firstDeadishCount : 0;
-const gFirstDeadish = guarded.firstDeadishCount ? guarded.firstDeadishSum / guarded.firstDeadishCount : 0;
-const bTurns = baseline.turnsSum / baseline.episodes;
-const gTurns = guarded.turnsSum / guarded.episodes;
-const bMax = baseline.finalMaxSum / baseline.episodes;
-const gMax = guarded.finalMaxSum / guarded.episodes;
-const bSecond = baseline.finalSecondSum / baseline.episodes;
-const gSecond = guarded.finalSecondSum / guarded.episodes;
-const bWin = baseline.wins / baseline.episodes;
-const gWin = guarded.wins / guarded.episodes;
-
-console.log("\n=== 비교 결과 ===");
-console.log(line("opportunity당 HL conversion rate", bConv, gConv, true));
-console.log(line("Type2 interception 비율 (conv none run 기준)", bType2, gType2, true));
-console.log(line("firstDeadishTurn 평균(관측된 에피소드만)", bFirstDeadish, gFirstDeadish));
-console.log(line("turns 평균", bTurns, gTurns));
-console.log(line("final maxTile 평균", bMax, gMax));
-console.log(line("final secondMaxTile 평균", bSecond, gSecond));
-console.log(line("win rate", bWin, gWin, true));
-
-console.log("\n--- raw counts ---");
+console.log("\n=== baseline raw ===");
 console.log(
   `baseline: oppConv=${baseline.oppConv}/${baseline.opp} type2=${baseline.type2Runs}/${baseline.noneRuns} wins=${baseline.wins}/${baseline.episodes}`
 );
-console.log(
-  `guarded : oppConv=${guarded.oppConv}/${guarded.opp} type2=${guarded.type2Runs}/${guarded.noneRuns} wins=${guarded.wins}/${guarded.episodes}`
-);
+printVariant("fixed1000", baseline, fixed1000);
+printVariant("fixed2000", baseline, fixed2000);
+printVariant("adaptive800_1200_1800", baseline, adaptive);
+printVariant("minimalPolicy(current)", baseline, minimalCurrent);

@@ -2,14 +2,26 @@
  * 최소 생존 목표: legal / empty / 인접 동일쌍 / 1스폰 생존 분기 수만 사용.
  * scoreBoardV3·expectimax와 독립.
  */
-import type { Board, Direction, TerminalReason } from "./types";
-import { LEN, emptyCount } from "./board";
+import type { Board, Direction, Policy, TerminalReason } from "./types";
+import { LEN, emptyCount, maxTileLevel } from "./board";
 import { legalActions } from "./legal";
 import { slide } from "./slide";
 import { spawnAll, spawnRandom } from "./spawn";
-import { hlConversionBonus } from "./topEndPairability";
+import {
+  adaptiveHlConversionBonus,
+  getMaxTileGap,
+  getTopEndPairability,
+} from "./topEndPairability";
 
 const DIR_ORDER: Direction[] = ["UP", "DOWN", "LEFT", "RIGHT"];
+export const PRECLOSURE_GAP_IMPROVE_BONUS = 350;
+export const PRECLOSURE_GAP_TO_ONE_BONUS = 700;
+export const PRECLOSURE_ORTH_CREATE_BONUS = 500;
+export const PRECLOSURE_ONESTEP_DROP_PENALTY = 400;
+const MINIMAL_HINT_ORDER: Direction[] = ["DOWN", "UP", "LEFT", "RIGHT"];
+export const MINIMAL_HINT_LATE_THRESHOLD = 7;
+export const MINIMAL_HINT_DEPTH_EARLY = 4;
+export const MINIMAL_HINT_DEPTH_LATE = 10;
 
 /** legal slide가 하나도 없으면 종료(패배) 보드. */
 export function isSurvivalTerminal(board: Board): boolean {
@@ -101,6 +113,104 @@ export function scoreBoardMinimal(board: Board): number {
   );
 }
 
+export function isPreClosureArmed(board: Board): boolean {
+  const pair = getTopEndPairability(board);
+  return getMaxTileGap(board) <= 2 && pair.oneSlideTop2Adj && countOneStepSurvivors(board) >= 4;
+}
+
+export function preClosureShapingAdjustment(before: Board, afterSlide: Board): number {
+  if (!isPreClosureArmed(before)) return 0;
+
+  const beforePair = getTopEndPairability(before);
+  const afterPair = getTopEndPairability(afterSlide);
+  const beforeGap = getMaxTileGap(before);
+  const afterGap = getMaxTileGap(afterSlide);
+  const beforeOneStep = countOneStepSurvivors(before);
+  const afterOneStep = countOneStepSurvivors(afterSlide);
+
+  let delta = 0;
+  if (afterGap < beforeGap) {
+    delta += PRECLOSURE_GAP_IMPROVE_BONUS;
+  }
+  if (beforeGap > 1 && afterGap <= 1) {
+    delta += PRECLOSURE_GAP_TO_ONE_BONUS;
+  }
+  if (!beforePair.top2OrthAdj && afterPair.top2OrthAdj) {
+    delta += PRECLOSURE_ORTH_CREATE_BONUS;
+  }
+  if (afterOneStep < beforeOneStep - 2) {
+    delta -= PRECLOSURE_ONESTEP_DROP_PENALTY;
+  }
+  return delta;
+}
+
+function scoreActionWithCurrentHeuristics(before: Board, afterSlide: Board): number {
+  return (
+    scoreBoardMinimal(afterSlide) +
+    adaptiveHlConversionBonus(before, afterSlide) +
+    preClosureShapingAdjustment(before, afterSlide)
+  );
+}
+
+/**
+ * hint/expectimax 스타일의 로컬 탐색:
+ * - depth=1: Q(a)=즉시 action 점수 + E_spawn[leaf]
+ * - depth=2: Q(a)=즉시 action 점수 + E_spawn[max_a' Q1(a')]
+ */
+export type MinimalHintHybridConfig = {
+  /** 고정 depth를 강제하고 싶을 때 사용(미지정 시 early/late 규칙 사용). */
+  depth?: number;
+  lateThreshold?: number;
+  depthEarly?: number;
+  depthLate?: number;
+};
+
+function maxQMinimalHint(board: Board, depth: number, memo: Map<string, number>): number {
+  if (depth <= 0) return scoreBoardMinimal(board);
+  const key = `${depth}:${board.join(",")}`;
+  const hit = memo.get(key);
+  if (hit !== undefined) return hit;
+
+  const acts = legalActions(board);
+  if (acts.length === 0) return scoreBoardMinimal(board);
+  let best = Number.NEGATIVE_INFINITY;
+  for (const d of MINIMAL_HINT_ORDER) {
+    if (!acts.includes(d)) continue;
+    const q = evaluateActionMinimalHint(board, d, depth, memo);
+    if (q > best) best = q;
+  }
+  const out = best === Number.NEGATIVE_INFINITY ? scoreBoardMinimal(board) : best;
+  memo.set(key, out);
+  return out;
+}
+
+export function evaluateActionMinimalHint(
+  board: Board,
+  action: Direction,
+  depth = 2,
+  memo: Map<string, number> = new Map()
+): number {
+  const { next, moved, win } = slide(board, action);
+  if (!moved) return Number.NEGATIVE_INFINITY;
+  const immediate = scoreActionWithCurrentHeuristics(board, next);
+  if (win) return immediate + 1_000_000_000;
+
+  const outcomes = spawnAll(next);
+  if (outcomes.length === 0) return immediate + scoreBoardMinimal(next);
+
+  if (depth <= 1) {
+    let sum = 0;
+    for (const s of outcomes) sum += scoreBoardMinimal(s);
+    return immediate + sum / outcomes.length;
+  }
+
+  let sum = 0;
+  for (const s of outcomes) {
+    sum += maxQMinimalHint(s, depth - 1, memo);
+  }
+  return immediate + sum / outcomes.length;
+}
+
 /** greedy: slide 직후 보드에 대해 scoreBoardMinimal 최대인 방향. 승리 수는 즉시 선택. */
 export function minimalPolicy(board: Board, actions: Direction[]): Direction {
   let bestScore = Number.NEGATIVE_INFINITY;
@@ -109,7 +219,10 @@ export function minimalPolicy(board: Board, actions: Direction[]): Direction {
     const { next, win, moved } = slide(board, d);
     if (win) return d;
     if (!moved) continue;
-    const s = scoreBoardMinimal(next) + hlConversionBonus(board, next);
+    const s =
+      scoreBoardMinimal(next) +
+      adaptiveHlConversionBonus(board, next) +
+      preClosureShapingAdjustment(board, next);
     if (s > bestScore) {
       bestScore = s;
       tied.length = 0;
@@ -123,6 +236,35 @@ export function minimalPolicy(board: Board, actions: Direction[]): Direction {
   }
   return actions[0]!;
 }
+
+/**
+ * hint 기반(기대값 탐색) + 현재 minimal 평가함수 결합 정책.
+ * 기본 depth=2, 동점은 DOWN/UP/LEFT/RIGHT 우선.
+ */
+export function createMinimalHintHybridPolicy(cfg?: MinimalHintHybridConfig): Policy {
+  const lateThreshold = cfg?.lateThreshold ?? MINIMAL_HINT_LATE_THRESHOLD;
+  const depthEarly = Math.max(1, Math.floor(cfg?.depthEarly ?? MINIMAL_HINT_DEPTH_EARLY));
+  const depthLate = Math.max(1, Math.floor(cfg?.depthLate ?? MINIMAL_HINT_DEPTH_LATE));
+  const fixedDepth = cfg?.depth !== undefined ? Math.max(1, Math.floor(cfg.depth)) : null;
+  return (board, actions) => {
+    const depth =
+      fixedDepth ?? (maxTileLevel(board) >= lateThreshold ? depthLate : depthEarly);
+    const memo = new Map<string, number>();
+    let best = actions[0]!;
+    let bestQ = Number.NEGATIVE_INFINITY;
+    for (const d of MINIMAL_HINT_ORDER) {
+      if (!actions.includes(d)) continue;
+      const q = evaluateActionMinimalHint(board, d, depth, memo);
+      if (q > bestQ) {
+        bestQ = q;
+        best = d;
+      }
+    }
+    return best;
+  };
+}
+
+export const minimalHintHybridPolicy: Policy = createMinimalHintHybridPolicy();
 
 /** 턴 시작 시점 보드 스냅샷(합법 slide 직전). */
 export type MinimalSurvivalTurnSnapshot = {

@@ -7,6 +7,8 @@ import {
   getHint,
   createHintSearchContext,
   mergeEndgameTuning,
+  legalActions,
+  minimalHintHybridPolicy,
   type HintSearchConfig,
 } from "../../sim";
 import { gameBoardToSim, simDirectionToGame } from "../hintBridge";
@@ -384,10 +386,17 @@ export class GameScene extends Phaser.Scene {
     if (isGameOver(board)) return;
 
     const simBoard = gameBoardToSim(board);
+    const actions = legalActions(simBoard);
+    if (actions.length === 0) return;
 
     this.registry.set(REG_HINT_BUSY, true);
     this.game.events.emit("stateChanged");
     try {
+      // Prefer minimal-hint hybrid policy for in-game hint button decisions.
+      const bestDirection = minimalHintHybridPolicy(simBoard, actions);
+      this.enqueueMove(simDirectionToGame(bestDirection));
+    } catch {
+      // Keep existing hint search as a safe fallback path.
       const hint = getHint(simBoard, this.hintSearchOptions());
       this.enqueueMove(simDirectionToGame(hint.bestDirection));
     } finally {

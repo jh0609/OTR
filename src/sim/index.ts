@@ -157,6 +157,7 @@ export {
   isNearDeadFromComponents,
   scoreBoardMinimal,
   minimalPolicy,
+  minimalHintHybridPolicy,
   createInitialBoardMinimal,
   simulateOneMinimalSurvival,
   type MinimalSurvivalTurnSnapshot,
