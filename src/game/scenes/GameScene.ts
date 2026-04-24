@@ -6,9 +6,9 @@ import { step as coreStep, isGameOver, hasWon, getEmptyCount } from "../core";
 import {
   getHint,
   createHintSearchContext,
+  createExpectimaxPolicy,
   mergeEndgameTuning,
   legalActions,
-  minimalHintHybridPolicy,
   type HintSearchConfig,
 } from "../../sim";
 import { gameBoardToSim, simDirectionToGame } from "../hintBridge";
@@ -69,6 +69,12 @@ type UndoSnapshot = {
 };
 
 const DRAG_TRACE_FADE_MS = 1000;
+
+const IN_GAME_HINT_POLICY = createExpectimaxPolicy({
+  reference: true,
+  referenceAdaptive: true,
+  referenceLog: false,
+});
 
 export class GameScene extends Phaser.Scene {
   private boardGraphics!: Phaser.GameObjects.Graphics;
@@ -392,8 +398,7 @@ export class GameScene extends Phaser.Scene {
     this.registry.set(REG_HINT_BUSY, true);
     this.game.events.emit("stateChanged");
     try {
-      // Prefer minimal-hint hybrid policy for in-game hint button decisions.
-      const bestDirection = minimalHintHybridPolicy(simBoard, actions);
+      const bestDirection = IN_GAME_HINT_POLICY(simBoard, actions);
       this.enqueueMove(simDirectionToGame(bestDirection));
     } catch {
       // Keep existing hint search as a safe fallback path.

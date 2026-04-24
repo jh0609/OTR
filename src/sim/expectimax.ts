@@ -34,6 +34,14 @@ const DEFAULT_SELECTIVE_LATE3: SelectiveLate3PlyOptions = {
 };
 
 export type ExpectimaxConfig = {
+  /** true면 C++ 2048-ai reference 구조를 3x3에 맞게 적응한 expectimax를 사용. */
+  reference?: boolean;
+  /** reference expectimax에서 maxTile<8이면 6, >=8이면 8을 사용. */
+  referenceAdaptive?: boolean;
+  /** reference expectimax용 고정 depth limit. 기본 8. */
+  referenceDepthLimit?: number;
+  /** reference expectimax용 move-by-move 로그 출력. */
+  referenceLog?: boolean;
   /** 하위 호환용 — scoreBoardV3에서는 사용하지 않음. */
   weights?: ScoreBoardWeights;
   patternSource?: PatternTripleSource;
@@ -51,6 +59,28 @@ export type ExpectimaxConfig = {
   rerankTopK?: number;
   /** scoreBoardV3 Phase3 + late 슬라이드 페널티 튜닝 (baseline 과 merge). */
   tuning?: EndgameTuningConfig;
+};
+
+export type ReferenceExpectimaxConfig = {
+  adaptive?: boolean;
+  depthLimit?: number;
+  log?: boolean;
+};
+
+type trans_table_entry_t = {
+  depth: number;
+  heuristic: number;
+};
+
+type trans_table_t = Map<bigint, trans_table_entry_t>;
+
+type eval_state = {
+  trans_table: trans_table_t;
+  maxdepth: number;
+  curdepth: number;
+  cachehits: number;
+  moves_evaled: number;
+  depth_limit: number;
 };
 
 /** 동일 튜닝으로 leaf / 1·2·3-ply 평가를 묶은 클로저. */
@@ -198,6 +228,309 @@ export function buildExpectimaxFns(tuning: EndgameTuning): ExpectimaxFns {
 }
 
 const defaultFns = buildExpectimaxFns(mergeEndgameTuning());
+
+const REFERENCE_MOVE_ORDER: Direction[] = ["UP", "DOWN", "LEFT", "RIGHT"];
+const REFERENCE_LINE_TABLE_SIZE = 1 << 12;
+
+// Heuristic scoring settings copied from the reference implementation.
+const SCORE_LOST_PENALTY = 200000.0;
+const SCORE_MONOTONICITY_POWER = 4.0;
+const SCORE_MONOTONICITY_WEIGHT = 47.0;
+const SCORE_SUM_POWER = 3.5;
+const SCORE_SUM_WEIGHT = 11.0;
+const SCORE_MERGES_WEIGHT = 700.0;
+const SCORE_EMPTY_WEIGHT = 270.0;
+
+// Statistics and controls copied from the reference implementation.
+const CPROB_THRESH_BASE = 0.0001;
+const CACHE_DEPTH_LIMIT = 15;
+const DEFAULT_REFERENCE_EXPECTIMAX_DEPTH_LIMIT = 8;
+const WIN_SCORE = 1_000_000_000;
+
+const heur_score_table = new Float64Array(REFERENCE_LINE_TABLE_SIZE);
+const score_table = new Float64Array(REFERENCE_LINE_TABLE_SIZE);
+let reference_tables_initialized = false;
+
+function init_tables(): void {
+  if (reference_tables_initialized) return;
+
+  for (let row = 0; row < REFERENCE_LINE_TABLE_SIZE; row++) {
+    const line = [(row >> 0) & 0xf, (row >> 4) & 0xf, (row >> 8) & 0xf];
+
+    let score = 0.0;
+    for (let i = 0; i < 3; i++) {
+      const rank = line[i]!;
+      if (rank >= 2) {
+        score += (rank - 1) * (1 << rank);
+      }
+    }
+    score_table[row] = score;
+
+    let sum = 0.0;
+    let empty = 0;
+    let merges = 0;
+    let prev = 0;
+    let counter = 0;
+    for (let i = 0; i < 3; i++) {
+      const rank = line[i]!;
+      sum += Math.pow(rank, SCORE_SUM_POWER);
+      if (rank === 0) {
+        empty++;
+      } else {
+        if (prev === rank) {
+          counter++;
+        } else if (counter > 0) {
+          merges += 1 + counter;
+          counter = 0;
+        }
+        prev = rank;
+      }
+    }
+    if (counter > 0) {
+      merges += 1 + counter;
+    }
+
+    let monotonicity_left = 0.0;
+    let monotonicity_right = 0.0;
+    for (let i = 1; i < 3; i++) {
+      const prevRank = line[i - 1]!;
+      const rank = line[i]!;
+      if (prevRank > rank) {
+        monotonicity_left +=
+          Math.pow(prevRank, SCORE_MONOTONICITY_POWER) - Math.pow(rank, SCORE_MONOTONICITY_POWER);
+      } else {
+        monotonicity_right +=
+          Math.pow(rank, SCORE_MONOTONICITY_POWER) - Math.pow(prevRank, SCORE_MONOTONICITY_POWER);
+      }
+    }
+
+    heur_score_table[row] =
+      SCORE_LOST_PENALTY +
+      SCORE_EMPTY_WEIGHT * empty +
+      SCORE_MERGES_WEIGHT * merges -
+      SCORE_MONOTONICITY_WEIGHT * Math.min(monotonicity_left, monotonicity_right) -
+      SCORE_SUM_WEIGHT * sum;
+  }
+
+  reference_tables_initialized = true;
+}
+
+function transpose(board: Board): Board {
+  return [
+    board[0],
+    board[3],
+    board[6],
+    board[1],
+    board[4],
+    board[7],
+    board[2],
+    board[5],
+    board[8],
+  ] as Board;
+}
+
+function count_empty(board: Board): number {
+  let empty = 0;
+  for (let i = 0; i < board.length; i++) {
+    if (board[i] === 0) empty++;
+  }
+  return empty;
+}
+
+function pack_board(board: Board): bigint {
+  let key = 0n;
+  for (let i = 0; i < board.length; i++) {
+    key |= BigInt(board[i] ?? 0) << BigInt(i * 4);
+  }
+  return key;
+}
+
+function extract_row_key(board: Board, row: number): number {
+  const base = row * 3;
+  return (board[base] ?? 0) | ((board[base + 1] ?? 0) << 4) | ((board[base + 2] ?? 0) << 8);
+}
+
+function score_helper(board: Board, table: Float64Array): number {
+  return table[extract_row_key(board, 0)]! + table[extract_row_key(board, 1)]! + table[extract_row_key(board, 2)]!;
+}
+
+function score_heur_board(board: Board): number {
+  return score_helper(board, heur_score_table) + score_helper(transpose(board), heur_score_table);
+}
+
+function score_board(board: Board): number {
+  return score_helper(board, score_table);
+}
+
+function isWinBoard(board: Board): boolean {
+  return maxTileLevel(board) >= 9;
+}
+
+function resolveReferenceDepthLimit(board: Board, cfg?: ReferenceExpectimaxConfig): number {
+  if (cfg?.adaptive === true) {
+    return maxTileLevel(board) >= 8 ? 8 : 6;
+  }
+  return cfg?.depthLimit ?? DEFAULT_REFERENCE_EXPECTIMAX_DEPTH_LIMIT;
+}
+
+function execute_move_0(board: Board): Board {
+  const { next, moved } = slide(board, "UP");
+  return moved ? next : board;
+}
+
+function execute_move_1(board: Board): Board {
+  const { next, moved } = slide(board, "DOWN");
+  return moved ? next : board;
+}
+
+function execute_move_2(board: Board): Board {
+  const { next, moved } = slide(board, "LEFT");
+  return moved ? next : board;
+}
+
+function execute_move_3(board: Board): Board {
+  const { next, moved } = slide(board, "RIGHT");
+  return moved ? next : board;
+}
+
+function execute_move(move: number, board: Board): Board {
+  switch (move) {
+    case 0:
+      return execute_move_0(board);
+    case 1:
+      return execute_move_1(board);
+    case 2:
+      return execute_move_2(board);
+    case 3:
+      return execute_move_3(board);
+    default:
+      return board;
+  }
+}
+
+function score_tilechoose_node(state: eval_state, board: Board, cprob: number): number {
+  if (isWinBoard(board)) {
+    return WIN_SCORE;
+  }
+
+  if (cprob < CPROB_THRESH_BASE || state.curdepth >= state.depth_limit) {
+    state.maxdepth = Math.max(state.curdepth, state.maxdepth);
+    return score_heur_board(board);
+  }
+
+  if (state.curdepth < CACHE_DEPTH_LIMIT) {
+    const entry = state.trans_table.get(pack_board(board));
+    if (entry !== undefined && entry.depth <= state.curdepth) {
+      state.cachehits++;
+      return entry.heuristic;
+    }
+  }
+
+  const num_open = count_empty(board);
+  cprob /= num_open;
+
+  let res = 0.0;
+  const spawned = spawnAll(board);
+  for (const next of spawned) {
+    res += score_move_node(state, next, cprob);
+  }
+  res = res / num_open;
+
+  if (state.curdepth < CACHE_DEPTH_LIMIT) {
+    state.trans_table.set(pack_board(board), { depth: state.curdepth, heuristic: res });
+  }
+  return res;
+}
+
+function score_move_node(state: eval_state, board: Board, cprob: number): number {
+  let best = 0.0;
+  state.curdepth++;
+  state.maxdepth = Math.max(state.maxdepth, state.curdepth);
+  let foundLegal = false;
+  for (let move = 0; move < 4; ++move) {
+    const newboard = execute_move(move, board);
+    state.moves_evaled++;
+    if (board !== newboard) {
+      foundLegal = true;
+      if (isWinBoard(newboard)) {
+        best = Math.max(best, WIN_SCORE);
+      } else {
+        best = Math.max(best, score_tilechoose_node(state, newboard, cprob));
+      }
+    }
+  }
+  if (!foundLegal) {
+    state.maxdepth = Math.max(state.curdepth, state.maxdepth);
+  }
+  state.curdepth--;
+  return best;
+}
+
+function _score_toplevel_move(state: eval_state, board: Board, move: number): number {
+  const newboard = execute_move(move, board);
+  if (board === newboard) {
+    return 0;
+  }
+  if (isWinBoard(newboard)) {
+    return WIN_SCORE + 1e-6;
+  }
+  return score_tilechoose_node(state, newboard, 1.0) + 1e-6;
+}
+
+export function score_toplevel_move(board: Board, move: number, cfg?: ReferenceExpectimaxConfig): number {
+  init_tables();
+
+  const state: eval_state = {
+    trans_table: new Map(),
+    maxdepth: 0,
+    curdepth: 0,
+    cachehits: 0,
+    moves_evaled: 0,
+    depth_limit: cfg?.depthLimit ?? DEFAULT_REFERENCE_EXPECTIMAX_DEPTH_LIMIT,
+  };
+
+  const start = Date.now();
+  const res = _score_toplevel_move(state, board, move);
+  const elapsed_ms = Date.now() - start;
+
+  if (cfg?.log === true) {
+    console.log(
+      `Move ${move} (${REFERENCE_MOVE_ORDER[move] ?? "?"}): result ${res}: eval'd ${state.moves_evaled} moves (${state.cachehits} cache hits, ${state.trans_table.size} cache size) in ${(elapsed_ms / 1000).toFixed(2)} seconds (maxdepth=${state.maxdepth}, actual=${score_board(board)})`
+    );
+  }
+
+  return res;
+}
+
+export function find_best_move(board: Board, cfg?: ReferenceExpectimaxConfig): number {
+  init_tables();
+  const depthLimit = resolveReferenceDepthLimit(board, cfg);
+
+  let best = 0.0;
+  let bestmove = -1;
+
+  if (cfg?.log === true) {
+    console.log(`[reference] maxTile=${maxTileLevel(board)} depthLimit=${depthLimit}`);
+  }
+
+  for (let move = 0; move < 4; move++) {
+    const res = score_toplevel_move(board, move, { ...cfg, depthLimit });
+    if (res > best) {
+      best = res;
+      bestmove = move;
+    }
+  }
+
+  return bestmove;
+}
+
+export function createReferenceExpectimaxPolicy(cfg?: ReferenceExpectimaxConfig): Policy {
+  return (board, actions) => {
+    const bestmove = find_best_move(board, cfg);
+    const chosen = REFERENCE_MOVE_ORDER[bestmove] ?? actions[0] ?? "UP";
+    return actions.includes(chosen) ? chosen : actions[0] ?? chosen;
+  };
+}
 
 function leafScore(board: Board): number {
   return defaultFns.leafScore(board);
@@ -399,6 +732,14 @@ export function searchExpectedValue(
 }
 
 export function createExpectimaxPolicy(cfg?: ExpectimaxConfig): Policy {
+  if (cfg?.reference === true) {
+    return createReferenceExpectimaxPolicy({
+      adaptive: cfg.referenceAdaptive,
+      depthLimit: cfg.referenceDepthLimit,
+      log: cfg.referenceLog,
+    });
+  }
+
   const depth: ExpectimaxDepth = cfg?.depth ?? 1;
   const selective = cfg?.selectiveLate3Ply === true && depth === 2;
   const selOpts = parseSelectiveConfig(cfg);
@@ -411,6 +752,9 @@ export function createExpectimaxPolicy(cfg?: ExpectimaxConfig): Policy {
 
 /** 기본: 1-ply expectimax. */
 export const expectimaxPolicyDefault: Policy = createExpectimaxPolicy();
+
+/** C++ 2048-ai reference 구조를 3x3에 적응한 expectimax. */
+export const expectimaxPolicyReference: Policy = createReferenceExpectimaxPolicy();
 
 /** 2-ply expectimax (느리지만 반응이 한 단계 더 깊음). */
 export const expectimaxPolicy2Ply: Policy = createExpectimaxPolicy({ depth: 2 });

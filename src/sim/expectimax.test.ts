@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { boardFrom } from "./simulate";
 import { slide } from "./slide";
 import {
@@ -8,6 +8,7 @@ import {
   evaluateAfterSlideSpawnExpectation,
   createExpectimaxPolicy,
   maxQ1Ply,
+  score_toplevel_move,
   searchExpectedValue,
   expectimaxPolicySelectiveLate3,
 } from "./expectimax";
@@ -15,6 +16,19 @@ import { scoreBoardV3 } from "./scoringV3";
 import { countMergePairs, DEFAULT_SCORE_WEIGHTS } from "./scoring";
 import { legalActions } from "./legal";
 import { maxTileLevel } from "./board";
+
+const WIN_SCORE = 1_000_000_000;
+
+function parseReferenceLog(line: string): { movesEvaled: number; maxdepth: number } {
+  const movesMatch = /eval'd (\d+) moves/.exec(line);
+  const depthMatch = /maxdepth=(\d+)/.exec(line);
+  expect(movesMatch).not.toBeNull();
+  expect(depthMatch).not.toBeNull();
+  return {
+    movesEvaled: Number(movesMatch![1]),
+    maxdepth: Number(depthMatch![1]),
+  };
+}
 
 describe("scoreBoardV3", () => {
   it("is finite for typical boards", () => {
@@ -124,5 +138,57 @@ describe("expectimaxPolicySelectiveLate3", () => {
       rerankTopK: 2,
     });
     expect(dSel).toBe(d2);
+  });
+});
+
+describe("reference expectimax sanity", () => {
+  it("returns 0 for invalid top-level moves", () => {
+    const b = boardFrom([1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(score_toplevel_move(b, 0, { depthLimit: 2 })).toBe(0);
+  });
+
+  it("scores immediate winning merges as WIN_SCORE at top level", () => {
+    const b = boardFrom([8, 8, 0, 0, 0, 0, 0, 0, 0]);
+    expect(score_toplevel_move(b, 2, { depthLimit: 2 })).toBeCloseTo(WIN_SCORE + 1e-6, 8);
+  });
+
+  it("evaluates exactly one level-1 spawn child per empty cell", () => {
+    const b = boardFrom([0, 1, 0, 0, 0, 0, 0, 0, 0]);
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      score_toplevel_move(b, 2, { depthLimit: 1, log: true });
+      expect(spy).toHaveBeenCalledTimes(1);
+      const { movesEvaled } = parseReferenceLog(String(spy.mock.calls[0]?.[0] ?? ""));
+      expect(movesEvaled).toBe(8 * 4);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does not recurse on immediate winning moves inside score_move_node", () => {
+    const b = boardFrom([8, 8, 0, 1, 2, 3, 4, 5, 6]);
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const score = score_toplevel_move(b, 0, { depthLimit: 4, log: true });
+      expect(score).toBeCloseTo(WIN_SCORE + 1e-6, 8);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const { movesEvaled } = parseReferenceLog(String(spy.mock.calls[0]?.[0] ?? ""));
+      expect(movesEvaled).toBe(4);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("updates maxdepth when depthLimit >= 1", () => {
+    const b = boardFrom([0, 1, 0, 0, 0, 0, 0, 0, 0]);
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      score_toplevel_move(b, 2, { depthLimit: 1, log: true });
+      expect(spy).toHaveBeenCalledTimes(1);
+      const { maxdepth } = parseReferenceLog(String(spy.mock.calls[0]?.[0] ?? ""));
+      expect(maxdepth).toBeGreaterThanOrEqual(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

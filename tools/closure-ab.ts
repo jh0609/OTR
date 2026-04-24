@@ -361,7 +361,7 @@ const PRIOR_SPAWN_ROBUST_IMMEDIATE_DEAD_REFERENCE = {
   avgFinalSecondMaxTile: 4.387,
 } as const;
 const EARLY_LIFT_SELECTOR_RULE =
-  "merge-opportunity transition filter first; then staged time-bounded best-first search with canonical transposition caching and pair-reachability pruning ranks moves by reachableRatio, search score, and merge-opportunity quality";
+  "merge-opportunity transition filter first; then staged time-bounded best-first search with canonical transposition caching; root-level target=(maxTile-2) pair-reachability ranks root moves only: early skipped, critical soft, post-7 strong preference";
 
 function pct(n: number): string {
   return `${(n * 100).toFixed(2)}%`;
@@ -1356,6 +1356,7 @@ function printEarlyLiftExperimentSummary(
   stats: RunMetrics,
   counters: MinimalPolicyExperimentDebugCounters
 ): void {
+  const oracleSearchEnabled = process.env.CLOSURE_AB_ORACLE_SEARCH === "1";
   const first7Sample = stats.first8Research.sampleSize;
   const post7Ge5 = stats.first8SecondaryResearch?.groupA.episodes ?? 0;
   const post7Ge6 = stats.first8Research.groupA.episodes;
@@ -1367,16 +1368,55 @@ function printEarlyLiftExperimentSummary(
   console.log("\nAlways-On Staged Merge Search");
   console.log(`selector rule: ${EARLY_LIFT_SELECTOR_RULE}`);
   console.log(
-    "early: best-first horizon 6 ~60ms with sampled spawns; critical: best-first horizon 12 ~200ms with wider spawn-aware search; post-7: best-first horizon 20 ~1s with all-spawn expansion"
+    `oracle search: ${oracleSearchEnabled ? "enabled for critical/post7 node-cap diagnostics" : "disabled"}`
+  );
+  console.log(
+    oracleSearchEnabled
+      ? "early: timed horizon 6 ~60ms sampled spawns; critical: oracle horizon 18 node cap 200000 all spawns; post-7: oracle horizon 24 node cap 400000 all spawns"
+      : "early: best-first horizon 6 ~60ms with sampled spawns; critical: best-first horizon 12 ~200ms with wider spawn-aware search; post-7: best-first horizon 20 ~1s with all-spawn expansion"
   );
   console.log(`first7 sample: ${first7Sample}/${stats.episodes}`);
   console.log(`avg first7 entry turn: ${fmtMaybe(stats.avgFirst7EntryTurn, 2)}`);
   console.log(`earlySearchDecisionCount: ${counters.earlySearchDecisionCount}`);
   console.log(`earlySearchMeanMoveTimeMs: ${counters.earlySearchMeanMoveTimeMs.toFixed(2)}`);
+  console.log(`earlySearchMeanSearchTimeMs: ${counters.earlySearchMeanSearchTimeMs.toFixed(2)}`);
+  console.log(
+    `earlySearchMeanReachabilityTimeMs: ${counters.earlySearchMeanReachabilityTimeMs.toFixed(2)}`
+  );
+  console.log(
+    `earlySearchMeanBestDepthReached: ${counters.earlySearchMeanBestDepthReached.toFixed(2)}`
+  );
+  console.log(`earlySearchExpandedNodeCount: ${counters.earlySearchExpandedNodeCount}`);
+  console.log(
+    `earlySearchCacheHitRate: ${pctCount(
+      counters.earlySearchCacheHitCount,
+      counters.earlySearchCacheHitCount + counters.earlySearchCacheMissCount
+    )}`
+  );
   console.log(`criticalSearchDecisionCount: ${counters.criticalSearchDecisionCount}`);
   console.log(`criticalSearchMeanMoveTimeMs: ${counters.criticalSearchMeanMoveTimeMs.toFixed(2)}`);
+  console.log(
+    `criticalSearchMeanSearchTimeMs: ${counters.criticalSearchMeanSearchTimeMs.toFixed(2)}`
+  );
+  console.log(
+    `criticalSearchMeanReachabilityTimeMs: ${counters.criticalSearchMeanReachabilityTimeMs.toFixed(2)}`
+  );
+  console.log(
+    `criticalSearchMeanBestDepthReached: ${counters.criticalSearchMeanBestDepthReached.toFixed(2)}`
+  );
+  console.log(`criticalSearchExpandedNodeCount: ${counters.criticalSearchExpandedNodeCount}`);
+  console.log(
+    `criticalSearchCacheHitRate: ${pctCount(
+      counters.criticalSearchCacheHitCount,
+      counters.criticalSearchCacheHitCount + counters.criticalSearchCacheMissCount
+    )}`
+  );
   console.log(`post7SearchDecisionCount: ${counters.post7SearchDecisionCount}`);
   console.log(`post7SearchMeanMoveTimeMs: ${counters.post7SearchMeanMoveTimeMs.toFixed(2)}`);
+  console.log(`post7SearchMeanSearchTimeMs: ${counters.post7SearchMeanSearchTimeMs.toFixed(2)}`);
+  console.log(
+    `post7SearchMeanReachabilityTimeMs: ${counters.post7SearchMeanReachabilityTimeMs.toFixed(2)}`
+  );
   console.log(`post7SearchEntryCount: ${counters.mergeWindowEntryCount}`);
   console.log(
     `post7SearchMeanBestDepthReached: ${counters.post7SearchMeanBestDepthReached.toFixed(2)}`
@@ -1426,10 +1466,10 @@ function printEarlyLiftExperimentSummary(
     `post7SearchChosenMeanReachableRatio: ${counters.post7SearchChosenMeanReachableRatio.toFixed(4)}`
   );
   console.log(
-    `post7SearchChosenMeanWorstBestImmediateMergeLevel: ${counters.post7SearchChosenMeanWorstBestImmediateMergeLevel.toFixed(4)}`
+    `post7SearchChosenMeanWorstReachableImmediateMergeLevel: ${counters.post7SearchChosenMeanWorstReachableImmediateMergeLevel.toFixed(4)}`
   );
   console.log(
-    `post7SearchChosenMeanWorstBestNearTermMergeLevel: ${counters.post7SearchChosenMeanWorstBestNearTermMergeLevel.toFixed(4)}`
+    `post7SearchChosenMeanWorstReachableNearTermMergeLevel: ${counters.post7SearchChosenMeanWorstReachableNearTermMergeLevel.toFixed(4)}`
   );
   console.log(
     `post7SearchChosenMeanFinalNoMergeShare: ${counters.post7SearchChosenMeanFinalNoMergeShare.toFixed(4)}`
@@ -1447,10 +1487,16 @@ function printEarlyLiftExperimentSummary(
     `stateSignalCache: ${counters.stateSignalCacheHitCount} hit / ${counters.stateSignalCacheMissCount} miss`
   );
   console.log(
-    `searchTranspositionCache: ${counters.post7SearchCacheHitCount} hit / ${counters.post7SearchCacheMissCount} miss`
+    `earlySearchTranspositionCache: ${counters.earlySearchCacheHitCount} hit / ${counters.earlySearchCacheMissCount} miss`
   );
   console.log(
-    `searchTranspositionCacheHitRate: ${pctCount(
+    `criticalSearchTranspositionCache: ${counters.criticalSearchCacheHitCount} hit / ${counters.criticalSearchCacheMissCount} miss`
+  );
+  console.log(
+    `post7SearchTranspositionCache: ${counters.post7SearchCacheHitCount} hit / ${counters.post7SearchCacheMissCount} miss`
+  );
+  console.log(
+    `post7SearchCacheHitRate: ${pctCount(
       counters.post7SearchCacheHitCount,
       counters.post7SearchCacheHitCount + counters.post7SearchCacheMissCount
     )}`

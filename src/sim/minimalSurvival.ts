@@ -55,6 +55,12 @@ const POST7_SEARCH_TIME_BUDGET_MS = 1000;
 const SEARCH_TRANSPOSITION_TABLE_MAX_SIZE = 100_000;
 const SEARCH_TRANSPOSITION_TABLE_EVICT_COUNT = 10_000;
 const SEARCH_LOGGING_ENABLED = process.env.CLOSURE_AB_LOG_SEARCH === "1";
+const ORACLE_SEARCH_ENABLED = process.env.CLOSURE_AB_ORACLE_SEARCH === "1";
+const ORACLE_CRITICAL_SEARCH_HORIZON = 18;
+const ORACLE_POST7_SEARCH_HORIZON = 24;
+const ORACLE_CRITICAL_EXPANDED_NODE_CAP = 200_000;
+const ORACLE_POST7_EXPANDED_NODE_CAP = 400_000;
+const SEARCH_SCORE_EPSILON = 1e-6;
 
 /** legal slide가 하나도 없으면 종료(패배) 보드. */
 export function isSurvivalTerminal(board: Board): boolean {
@@ -316,12 +322,40 @@ type BestFirstSearchConfig = {
   reachabilityBeamWidth: number;
   useAllSpawns: boolean;
   spawnSampleLimit: number;
+  expandedNodeCap: number | null;
+  decisionExpandedNodeCap: number | null;
+  rootScreeningBudgetFraction: number;
+  rootRefineTopK: number;
+  maxFrontierSize: number | null;
+  maxPerRootFrontierSize: number | null;
+  maxPerSpawnLineFrontierSize: number | null;
+};
+
+type StateKey = bigint;
+
+type FrontierEntry = {
+  priority: number;
+  score: number;
+  depth: number;
+};
+
+type DepthHistogram = Record<number, number>;
+
+type SearchRuntimeBreakdown = {
+  canonicalTimeMs: number;
+  heapTimeMs: number;
+  expandTimeMs: number;
+  evalSignalsTimeMs: number;
+  viableCountTimeMs: number;
+  scoreComputeTimeMs: number;
+  transpositionCheckTimeMs: number;
+  frontierDedupeTimeMs: number;
 };
 
 type SearchNode = {
   board: Board;
+  stateKey: StateKey;
   depth: number;
-  targetLevel: number;
   score: number;
   priority: number;
   signals: MergeStateSignals;
@@ -330,10 +364,24 @@ type SearchNode = {
 type SearchLineSummary = {
   bestScore: number;
   bestDepthReached: number;
+  maxDepthReached: number;
   expandedNodes: number;
   cacheHitCount: number;
   cacheMissCount: number;
-  reachableTarget: boolean;
+  duplicatePrunedCount: number;
+  noLegalMovePrunedCount: number;
+  nodeCapHit: boolean;
+  maxFrontierSize: number;
+  generatedNodes: number;
+  enqueuedNodes: number;
+  enqueueDuplicateSkipped: number;
+  enqueueDominatedSkipped: number;
+  popDuplicateSkipped: number;
+  frontierPeakSize: number;
+  expandedByDepth: DepthHistogram;
+  enqueuedByDepth: DepthHistogram;
+  runtimeBreakdown: SearchRuntimeBreakdown;
+  searchTimeMs: number;
   bestImmediateMergeLevelSeen: number;
   bestNearTermMergeLevelSeen: number;
   bestChainSustainMergeCountSeen: number;
@@ -347,13 +395,45 @@ type SearchLineSummary = {
 
 type SearchStage = "early" | "critical" | "post7";
 
+type RootReachabilitySummary = {
+  targetLevel: number;
+  reachableRatio: number | null;
+  worstReachableImmediateMergeLevel: number;
+  worstReachableNearTermMergeLevel: number;
+  reachabilityTimeMs: number;
+};
+
+type StageDecisionMetrics = {
+  elapsedMs: number;
+  searchTimeMs: number;
+  reachabilityTimeMs: number;
+  searchSummaryCount: number;
+  searchSpawnChildCount: number;
+  expandedNodes: number;
+  cacheHitCount: number;
+  cacheMissCount: number;
+  duplicatePrunedCount: number;
+  noLegalMovePrunedCount: number;
+  nodeCapHitCount: number;
+  maxFrontierSizePeak: number;
+  rootEvaluationCount: number;
+  generatedNodes: number;
+  enqueuedNodes: number;
+  enqueueDuplicateSkipped: number;
+  enqueueDominatedSkipped: number;
+  popDuplicateSkipped: number;
+  frontierPeakSize: number;
+  chosenBestDepthReached: number;
+};
+
 type MoveSearchSummary = {
   transition: MoveMergeOpportunitySummary;
   config: BestFirstSearchConfig;
+  targetLevel: number;
   searchScore: number;
-  reachableRatio: number;
-  worstBestImmediateMergeLevelSeen: number;
-  worstBestNearTermMergeLevelSeen: number;
+  reachableRatio: number | null;
+  worstReachableImmediateMergeLevel: number;
+  worstReachableNearTermMergeLevel: number;
   finalNoMergeShare: number;
   meanBestImmediateMergeLevelSeen: number;
   meanBestNearTermMergeLevelSeen: number;
@@ -361,10 +441,55 @@ type MoveSearchSummary = {
   meanFinalViableMoveCount: number;
   meanFinalEmptyCount: number;
   bestDepthReached: number;
+  maxDepthReached: number;
   expandedNodes: number;
   cacheHitCount: number;
   cacheMissCount: number;
   cacheHitRate: number;
+  searchSpawnChildCount: number;
+  searchSummaryCount: number;
+  duplicatePrunedCount: number;
+  noLegalMovePrunedCount: number;
+  nodeCapHitCount: number;
+  maxFrontierSize: number;
+  generatedNodes: number;
+  enqueuedNodes: number;
+  enqueueDuplicateSkipped: number;
+  enqueueDominatedSkipped: number;
+  popDuplicateSkipped: number;
+  frontierPeakSize: number;
+  expandedByDepth: DepthHistogram;
+  enqueuedByDepth: DepthHistogram;
+  runtimeBreakdown: SearchRuntimeBreakdown;
+  topCandidateDepth: number;
+  topCandidateScore: number;
+  searchTimeMs: number;
+  reachabilityTimeMs: number;
+};
+
+type SearchPassSummary = {
+  summaries: MoveSearchSummary[];
+  expandedNodes: number;
+  cacheHitCount: number;
+  cacheMissCount: number;
+  searchTimeMs: number;
+  reachabilityTimeMs: number;
+  searchSummaryCount: number;
+  searchSpawnChildCount: number;
+  duplicatePrunedCount: number;
+  noLegalMovePrunedCount: number;
+  nodeCapHitCount: number;
+  maxFrontierSizePeak: number;
+  rootEvaluationCount: number;
+  generatedNodes: number;
+  enqueuedNodes: number;
+  enqueueDuplicateSkipped: number;
+  enqueueDominatedSkipped: number;
+  popDuplicateSkipped: number;
+  frontierPeakSize: number;
+  expandedByDepth: DepthHistogram;
+  enqueuedByDepth: DepthHistogram;
+  runtimeBreakdown: SearchRuntimeBreakdown;
 };
 
 type ReachabilityOptions = {
@@ -377,7 +502,6 @@ type ReachabilityOptions = {
 type CacheEntry = {
   bestScoreSeen: number;
   depthSeen: number;
-  reachableMask: number;
   lastVisitTs: number;
 };
 
@@ -402,21 +526,77 @@ type MinimalPolicyExperimentCounterState = {
   spawnCacheMissCount: number;
   stateSignalCacheHitCount: number;
   stateSignalCacheMissCount: number;
+  earlySearchDecisionCount: number;
+  earlySearchTotalTimeMs: number;
+  earlySearchTotalSearchTimeMs: number;
+  earlySearchTotalReachabilityTimeMs: number;
+  earlySearchSummaryCount: number;
+  earlySearchSpawnChildCount: number;
+  earlySearchRootEvaluationCount: number;
+  earlySearchExpandedNodeCount: number;
+  earlySearchGeneratedNodeCount: number;
+  earlySearchEnqueuedNodeCount: number;
+  earlySearchEnqueueDuplicateSkippedCount: number;
+  earlySearchEnqueueDominatedSkippedCount: number;
+  earlySearchPopDuplicateSkippedCount: number;
+  earlySearchFrontierPeakSizePeak: number;
+  earlySearchBestDepthReachedSum: number;
+  earlySearchBestDepthReachedPeak: number;
+  earlySearchCacheHitCount: number;
+  earlySearchCacheMissCount: number;
+  earlySearchDuplicatePrunedCount: number;
+  earlySearchNoLegalMovePrunedCount: number;
+  earlySearchNodeCapHitCount: number;
+  earlySearchMaxFrontierSizePeak: number;
+  criticalSearchDecisionCount: number;
+  criticalSearchTotalTimeMs: number;
+  criticalSearchTotalSearchTimeMs: number;
+  criticalSearchTotalReachabilityTimeMs: number;
+  criticalSearchSummaryCount: number;
+  criticalSearchSpawnChildCount: number;
+  criticalSearchRootEvaluationCount: number;
+  criticalSearchExpandedNodeCount: number;
+  criticalSearchGeneratedNodeCount: number;
+  criticalSearchEnqueuedNodeCount: number;
+  criticalSearchEnqueueDuplicateSkippedCount: number;
+  criticalSearchEnqueueDominatedSkippedCount: number;
+  criticalSearchPopDuplicateSkippedCount: number;
+  criticalSearchFrontierPeakSizePeak: number;
+  criticalSearchBestDepthReachedSum: number;
+  criticalSearchBestDepthReachedPeak: number;
+  criticalSearchCacheHitCount: number;
+  criticalSearchCacheMissCount: number;
+  criticalSearchDuplicatePrunedCount: number;
+  criticalSearchNoLegalMovePrunedCount: number;
+  criticalSearchNodeCapHitCount: number;
+  criticalSearchMaxFrontierSizePeak: number;
   post7SearchDecisionCount: number;
   post7SearchTotalTimeMs: number;
+  post7SearchTotalSearchTimeMs: number;
+  post7SearchTotalReachabilityTimeMs: number;
+  post7SearchSummaryCount: number;
+  post7SearchSpawnChildCount: number;
+  post7SearchRootEvaluationCount: number;
   post7SearchExpandedNodeCount: number;
+  post7SearchGeneratedNodeCount: number;
+  post7SearchEnqueuedNodeCount: number;
+  post7SearchEnqueueDuplicateSkippedCount: number;
+  post7SearchEnqueueDominatedSkippedCount: number;
+  post7SearchPopDuplicateSkippedCount: number;
+  post7SearchFrontierPeakSizePeak: number;
   post7SearchBestDepthReachedSum: number;
+  post7SearchBestDepthReachedPeak: number;
   post7SearchChosenSearchScoreSum: number;
   post7SearchChosenReachableRatioSum: number;
-  post7SearchChosenMeanWorstBestImmediateMergeLevelSum: number;
-  post7SearchChosenMeanWorstBestNearTermMergeLevelSum: number;
+  post7SearchChosenMeanWorstReachableImmediateMergeLevelSum: number;
+  post7SearchChosenMeanWorstReachableNearTermMergeLevelSum: number;
   post7SearchChosenFinalNoMergeShareSum: number;
   post7SearchCacheHitCount: number;
   post7SearchCacheMissCount: number;
-  earlySearchDecisionCount: number;
-  earlySearchTotalTimeMs: number;
-  criticalSearchDecisionCount: number;
-  criticalSearchTotalTimeMs: number;
+  post7SearchDuplicatePrunedCount: number;
+  post7SearchNoLegalMovePrunedCount: number;
+  post7SearchNodeCapHitCount: number;
+  post7SearchMaxFrontierSizePeak: number;
 };
 
 export type MinimalPolicyExperimentDebugCounters = {
@@ -440,21 +620,86 @@ export type MinimalPolicyExperimentDebugCounters = {
   spawnCacheMissCount: number;
   stateSignalCacheHitCount: number;
   stateSignalCacheMissCount: number;
+  earlySearchDecisionCount: number;
+  earlySearchMeanMoveTimeMs: number;
+  earlySearchMeanSearchTimeMs: number;
+  earlySearchMeanReachabilityTimeMs: number;
+  earlySearchSummaryCount: number;
+  earlySearchSpawnChildCount: number;
+  earlySearchMeanSpawnChildCount: number;
+  earlySearchRootEvaluationCount: number;
+  earlySearchExpandedNodeCount: number;
+  earlySearchMeanPerRootExpandedNodes: number;
+  earlySearchGeneratedNodeCount: number;
+  earlySearchEnqueuedNodeCount: number;
+  earlySearchMeanPerRootEnqueuedNodes: number;
+  earlySearchEnqueueDuplicateSkippedCount: number;
+  earlySearchEnqueueDominatedSkippedCount: number;
+  earlySearchPopDuplicateSkippedCount: number;
+  earlySearchFrontierPeakSizePeak: number;
+  earlySearchMeanBestDepthReached: number;
+  earlySearchBestDepthReachedPeak: number;
+  earlySearchCacheHitCount: number;
+  earlySearchCacheMissCount: number;
+  earlySearchDuplicatePrunedCount: number;
+  earlySearchNoLegalMovePrunedCount: number;
+  earlySearchNodeCapHitCount: number;
+  earlySearchMaxFrontierSizePeak: number;
+  criticalSearchDecisionCount: number;
+  criticalSearchMeanMoveTimeMs: number;
+  criticalSearchMeanSearchTimeMs: number;
+  criticalSearchMeanReachabilityTimeMs: number;
+  criticalSearchSummaryCount: number;
+  criticalSearchSpawnChildCount: number;
+  criticalSearchMeanSpawnChildCount: number;
+  criticalSearchRootEvaluationCount: number;
+  criticalSearchExpandedNodeCount: number;
+  criticalSearchMeanPerRootExpandedNodes: number;
+  criticalSearchGeneratedNodeCount: number;
+  criticalSearchEnqueuedNodeCount: number;
+  criticalSearchMeanPerRootEnqueuedNodes: number;
+  criticalSearchEnqueueDuplicateSkippedCount: number;
+  criticalSearchEnqueueDominatedSkippedCount: number;
+  criticalSearchPopDuplicateSkippedCount: number;
+  criticalSearchFrontierPeakSizePeak: number;
+  criticalSearchMeanBestDepthReached: number;
+  criticalSearchBestDepthReachedPeak: number;
+  criticalSearchCacheHitCount: number;
+  criticalSearchCacheMissCount: number;
+  criticalSearchDuplicatePrunedCount: number;
+  criticalSearchNoLegalMovePrunedCount: number;
+  criticalSearchNodeCapHitCount: number;
+  criticalSearchMaxFrontierSizePeak: number;
   post7SearchDecisionCount: number;
   post7SearchMeanMoveTimeMs: number;
+  post7SearchMeanSearchTimeMs: number;
+  post7SearchMeanReachabilityTimeMs: number;
+  post7SearchSummaryCount: number;
+  post7SearchSpawnChildCount: number;
+  post7SearchMeanSpawnChildCount: number;
+  post7SearchRootEvaluationCount: number;
   post7SearchExpandedNodeCount: number;
+  post7SearchMeanPerRootExpandedNodes: number;
+  post7SearchGeneratedNodeCount: number;
+  post7SearchEnqueuedNodeCount: number;
+  post7SearchMeanPerRootEnqueuedNodes: number;
+  post7SearchEnqueueDuplicateSkippedCount: number;
+  post7SearchEnqueueDominatedSkippedCount: number;
+  post7SearchPopDuplicateSkippedCount: number;
+  post7SearchFrontierPeakSizePeak: number;
   post7SearchMeanBestDepthReached: number;
+  post7SearchBestDepthReachedPeak: number;
   post7SearchChosenMeanSearchScore: number;
   post7SearchChosenMeanReachableRatio: number;
-  post7SearchChosenMeanWorstBestImmediateMergeLevel: number;
-  post7SearchChosenMeanWorstBestNearTermMergeLevel: number;
+  post7SearchChosenMeanWorstReachableImmediateMergeLevel: number;
+  post7SearchChosenMeanWorstReachableNearTermMergeLevel: number;
   post7SearchChosenMeanFinalNoMergeShare: number;
   post7SearchCacheHitCount: number;
   post7SearchCacheMissCount: number;
-  earlySearchDecisionCount: number;
-  earlySearchMeanMoveTimeMs: number;
-  criticalSearchDecisionCount: number;
-  criticalSearchMeanMoveTimeMs: number;
+  post7SearchDuplicatePrunedCount: number;
+  post7SearchNoLegalMovePrunedCount: number;
+  post7SearchNodeCapHitCount: number;
+  post7SearchMaxFrontierSizePeak: number;
 };
 
 const minimalPolicyExperimentCounterState: MinimalPolicyExperimentCounterState = {
@@ -478,21 +723,77 @@ const minimalPolicyExperimentCounterState: MinimalPolicyExperimentCounterState =
   spawnCacheMissCount: 0,
   stateSignalCacheHitCount: 0,
   stateSignalCacheMissCount: 0,
+  earlySearchDecisionCount: 0,
+  earlySearchTotalTimeMs: 0,
+  earlySearchTotalSearchTimeMs: 0,
+  earlySearchTotalReachabilityTimeMs: 0,
+  earlySearchSummaryCount: 0,
+  earlySearchSpawnChildCount: 0,
+  earlySearchRootEvaluationCount: 0,
+  earlySearchExpandedNodeCount: 0,
+  earlySearchGeneratedNodeCount: 0,
+  earlySearchEnqueuedNodeCount: 0,
+  earlySearchEnqueueDuplicateSkippedCount: 0,
+  earlySearchEnqueueDominatedSkippedCount: 0,
+  earlySearchPopDuplicateSkippedCount: 0,
+  earlySearchFrontierPeakSizePeak: 0,
+  earlySearchBestDepthReachedSum: 0,
+  earlySearchBestDepthReachedPeak: 0,
+  earlySearchCacheHitCount: 0,
+  earlySearchCacheMissCount: 0,
+  earlySearchDuplicatePrunedCount: 0,
+  earlySearchNoLegalMovePrunedCount: 0,
+  earlySearchNodeCapHitCount: 0,
+  earlySearchMaxFrontierSizePeak: 0,
+  criticalSearchDecisionCount: 0,
+  criticalSearchTotalTimeMs: 0,
+  criticalSearchTotalSearchTimeMs: 0,
+  criticalSearchTotalReachabilityTimeMs: 0,
+  criticalSearchSummaryCount: 0,
+  criticalSearchSpawnChildCount: 0,
+  criticalSearchRootEvaluationCount: 0,
+  criticalSearchExpandedNodeCount: 0,
+  criticalSearchGeneratedNodeCount: 0,
+  criticalSearchEnqueuedNodeCount: 0,
+  criticalSearchEnqueueDuplicateSkippedCount: 0,
+  criticalSearchEnqueueDominatedSkippedCount: 0,
+  criticalSearchPopDuplicateSkippedCount: 0,
+  criticalSearchFrontierPeakSizePeak: 0,
+  criticalSearchBestDepthReachedSum: 0,
+  criticalSearchBestDepthReachedPeak: 0,
+  criticalSearchCacheHitCount: 0,
+  criticalSearchCacheMissCount: 0,
+  criticalSearchDuplicatePrunedCount: 0,
+  criticalSearchNoLegalMovePrunedCount: 0,
+  criticalSearchNodeCapHitCount: 0,
+  criticalSearchMaxFrontierSizePeak: 0,
   post7SearchDecisionCount: 0,
   post7SearchTotalTimeMs: 0,
+  post7SearchTotalSearchTimeMs: 0,
+  post7SearchTotalReachabilityTimeMs: 0,
+  post7SearchSummaryCount: 0,
+  post7SearchSpawnChildCount: 0,
+  post7SearchRootEvaluationCount: 0,
   post7SearchExpandedNodeCount: 0,
+  post7SearchGeneratedNodeCount: 0,
+  post7SearchEnqueuedNodeCount: 0,
+  post7SearchEnqueueDuplicateSkippedCount: 0,
+  post7SearchEnqueueDominatedSkippedCount: 0,
+  post7SearchPopDuplicateSkippedCount: 0,
+  post7SearchFrontierPeakSizePeak: 0,
   post7SearchBestDepthReachedSum: 0,
+  post7SearchBestDepthReachedPeak: 0,
   post7SearchChosenSearchScoreSum: 0,
   post7SearchChosenReachableRatioSum: 0,
-  post7SearchChosenMeanWorstBestImmediateMergeLevelSum: 0,
-  post7SearchChosenMeanWorstBestNearTermMergeLevelSum: 0,
+  post7SearchChosenMeanWorstReachableImmediateMergeLevelSum: 0,
+  post7SearchChosenMeanWorstReachableNearTermMergeLevelSum: 0,
   post7SearchChosenFinalNoMergeShareSum: 0,
   post7SearchCacheHitCount: 0,
   post7SearchCacheMissCount: 0,
-  earlySearchDecisionCount: 0,
-  earlySearchTotalTimeMs: 0,
-  criticalSearchDecisionCount: 0,
-  criticalSearchTotalTimeMs: 0,
+  post7SearchDuplicatePrunedCount: 0,
+  post7SearchNoLegalMovePrunedCount: 0,
+  post7SearchNodeCapHitCount: 0,
+  post7SearchMaxFrontierSizePeak: 0,
 };
 
 const minimalPolicyExperimentMoveCache = new Map<string, CachedSlideResult>();
@@ -502,6 +803,7 @@ const minimalPolicyExperimentStateSignalCache = new Map<string, MergeStateSignal
 const minimalPolicyExperimentSearchTranspositionTable = new Map<bigint, CacheEntry>();
 const minimalPolicyExperimentPairReachabilityCache = new Map<string, boolean>();
 let minimalPolicyExperimentSearchVisitClock = 0;
+let activeSearchRuntimeBreakdown: SearchRuntimeBreakdown | null = null;
 
 export function resetMinimalPolicyExperimentDebugCounters(): void {
   minimalPolicyExperimentCounterState.mergeWindowEntryCount = 0;
@@ -524,21 +826,77 @@ export function resetMinimalPolicyExperimentDebugCounters(): void {
   minimalPolicyExperimentCounterState.spawnCacheMissCount = 0;
   minimalPolicyExperimentCounterState.stateSignalCacheHitCount = 0;
   minimalPolicyExperimentCounterState.stateSignalCacheMissCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchDecisionCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchTotalTimeMs = 0;
+  minimalPolicyExperimentCounterState.earlySearchTotalSearchTimeMs = 0;
+  minimalPolicyExperimentCounterState.earlySearchTotalReachabilityTimeMs = 0;
+  minimalPolicyExperimentCounterState.earlySearchSummaryCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchSpawnChildCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchRootEvaluationCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchExpandedNodeCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchGeneratedNodeCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchEnqueuedNodeCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchEnqueueDuplicateSkippedCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchEnqueueDominatedSkippedCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchPopDuplicateSkippedCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchFrontierPeakSizePeak = 0;
+  minimalPolicyExperimentCounterState.earlySearchBestDepthReachedSum = 0;
+  minimalPolicyExperimentCounterState.earlySearchBestDepthReachedPeak = 0;
+  minimalPolicyExperimentCounterState.earlySearchCacheHitCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchCacheMissCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchDuplicatePrunedCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchNoLegalMovePrunedCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchNodeCapHitCount = 0;
+  minimalPolicyExperimentCounterState.earlySearchMaxFrontierSizePeak = 0;
+  minimalPolicyExperimentCounterState.criticalSearchDecisionCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchTotalTimeMs = 0;
+  minimalPolicyExperimentCounterState.criticalSearchTotalSearchTimeMs = 0;
+  minimalPolicyExperimentCounterState.criticalSearchTotalReachabilityTimeMs = 0;
+  minimalPolicyExperimentCounterState.criticalSearchSummaryCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchSpawnChildCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchRootEvaluationCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchExpandedNodeCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchGeneratedNodeCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchEnqueuedNodeCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchEnqueueDuplicateSkippedCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchEnqueueDominatedSkippedCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchPopDuplicateSkippedCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchFrontierPeakSizePeak = 0;
+  minimalPolicyExperimentCounterState.criticalSearchBestDepthReachedSum = 0;
+  minimalPolicyExperimentCounterState.criticalSearchBestDepthReachedPeak = 0;
+  minimalPolicyExperimentCounterState.criticalSearchCacheHitCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchCacheMissCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchDuplicatePrunedCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchNoLegalMovePrunedCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchNodeCapHitCount = 0;
+  minimalPolicyExperimentCounterState.criticalSearchMaxFrontierSizePeak = 0;
   minimalPolicyExperimentCounterState.post7SearchDecisionCount = 0;
   minimalPolicyExperimentCounterState.post7SearchTotalTimeMs = 0;
+  minimalPolicyExperimentCounterState.post7SearchTotalSearchTimeMs = 0;
+  minimalPolicyExperimentCounterState.post7SearchTotalReachabilityTimeMs = 0;
+  minimalPolicyExperimentCounterState.post7SearchSummaryCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchSpawnChildCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchRootEvaluationCount = 0;
   minimalPolicyExperimentCounterState.post7SearchExpandedNodeCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchGeneratedNodeCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchEnqueuedNodeCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchEnqueueDuplicateSkippedCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchEnqueueDominatedSkippedCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchPopDuplicateSkippedCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchFrontierPeakSizePeak = 0;
   minimalPolicyExperimentCounterState.post7SearchBestDepthReachedSum = 0;
+  minimalPolicyExperimentCounterState.post7SearchBestDepthReachedPeak = 0;
   minimalPolicyExperimentCounterState.post7SearchChosenSearchScoreSum = 0;
   minimalPolicyExperimentCounterState.post7SearchChosenReachableRatioSum = 0;
-  minimalPolicyExperimentCounterState.post7SearchChosenMeanWorstBestImmediateMergeLevelSum = 0;
-  minimalPolicyExperimentCounterState.post7SearchChosenMeanWorstBestNearTermMergeLevelSum = 0;
+  minimalPolicyExperimentCounterState.post7SearchChosenMeanWorstReachableImmediateMergeLevelSum = 0;
+  minimalPolicyExperimentCounterState.post7SearchChosenMeanWorstReachableNearTermMergeLevelSum = 0;
   minimalPolicyExperimentCounterState.post7SearchChosenFinalNoMergeShareSum = 0;
   minimalPolicyExperimentCounterState.post7SearchCacheHitCount = 0;
   minimalPolicyExperimentCounterState.post7SearchCacheMissCount = 0;
-  minimalPolicyExperimentCounterState.earlySearchDecisionCount = 0;
-  minimalPolicyExperimentCounterState.earlySearchTotalTimeMs = 0;
-  minimalPolicyExperimentCounterState.criticalSearchDecisionCount = 0;
-  minimalPolicyExperimentCounterState.criticalSearchTotalTimeMs = 0;
+  minimalPolicyExperimentCounterState.post7SearchDuplicatePrunedCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchNoLegalMovePrunedCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchNodeCapHitCount = 0;
+  minimalPolicyExperimentCounterState.post7SearchMaxFrontierSizePeak = 0;
   minimalPolicyExperimentMoveCache.clear();
   minimalPolicyExperimentSpawnCache.clear();
   minimalPolicyExperimentViableCountCache.clear();
@@ -592,18 +950,192 @@ export function snapshotMinimalPolicyExperimentDebugCounters(): MinimalPolicyExp
     spawnCacheMissCount: minimalPolicyExperimentCounterState.spawnCacheMissCount,
     stateSignalCacheHitCount: minimalPolicyExperimentCounterState.stateSignalCacheHitCount,
     stateSignalCacheMissCount: minimalPolicyExperimentCounterState.stateSignalCacheMissCount,
+    earlySearchDecisionCount: minimalPolicyExperimentCounterState.earlySearchDecisionCount,
+    earlySearchMeanMoveTimeMs:
+      minimalPolicyExperimentCounterState.earlySearchDecisionCount > 0
+        ? minimalPolicyExperimentCounterState.earlySearchTotalTimeMs /
+          minimalPolicyExperimentCounterState.earlySearchDecisionCount
+        : 0,
+    earlySearchMeanSearchTimeMs:
+      minimalPolicyExperimentCounterState.earlySearchDecisionCount > 0
+        ? minimalPolicyExperimentCounterState.earlySearchTotalSearchTimeMs /
+          minimalPolicyExperimentCounterState.earlySearchDecisionCount
+        : 0,
+    earlySearchMeanReachabilityTimeMs:
+      minimalPolicyExperimentCounterState.earlySearchDecisionCount > 0
+        ? minimalPolicyExperimentCounterState.earlySearchTotalReachabilityTimeMs /
+          minimalPolicyExperimentCounterState.earlySearchDecisionCount
+        : 0,
+    earlySearchSummaryCount: minimalPolicyExperimentCounterState.earlySearchSummaryCount,
+    earlySearchSpawnChildCount: minimalPolicyExperimentCounterState.earlySearchSpawnChildCount,
+    earlySearchMeanSpawnChildCount:
+      minimalPolicyExperimentCounterState.earlySearchSummaryCount > 0
+        ? minimalPolicyExperimentCounterState.earlySearchSpawnChildCount /
+          minimalPolicyExperimentCounterState.earlySearchSummaryCount
+        : 0,
+    earlySearchRootEvaluationCount:
+      minimalPolicyExperimentCounterState.earlySearchRootEvaluationCount,
+    earlySearchExpandedNodeCount: minimalPolicyExperimentCounterState.earlySearchExpandedNodeCount,
+    earlySearchMeanPerRootExpandedNodes:
+      minimalPolicyExperimentCounterState.earlySearchRootEvaluationCount > 0
+        ? minimalPolicyExperimentCounterState.earlySearchExpandedNodeCount /
+          minimalPolicyExperimentCounterState.earlySearchRootEvaluationCount
+        : 0,
+    earlySearchGeneratedNodeCount:
+      minimalPolicyExperimentCounterState.earlySearchGeneratedNodeCount,
+    earlySearchEnqueuedNodeCount:
+      minimalPolicyExperimentCounterState.earlySearchEnqueuedNodeCount,
+    earlySearchMeanPerRootEnqueuedNodes:
+      minimalPolicyExperimentCounterState.earlySearchRootEvaluationCount > 0
+        ? minimalPolicyExperimentCounterState.earlySearchEnqueuedNodeCount /
+          minimalPolicyExperimentCounterState.earlySearchRootEvaluationCount
+        : 0,
+    earlySearchEnqueueDuplicateSkippedCount:
+      minimalPolicyExperimentCounterState.earlySearchEnqueueDuplicateSkippedCount,
+    earlySearchEnqueueDominatedSkippedCount:
+      minimalPolicyExperimentCounterState.earlySearchEnqueueDominatedSkippedCount,
+    earlySearchPopDuplicateSkippedCount:
+      minimalPolicyExperimentCounterState.earlySearchPopDuplicateSkippedCount,
+    earlySearchFrontierPeakSizePeak:
+      minimalPolicyExperimentCounterState.earlySearchFrontierPeakSizePeak,
+    earlySearchMeanBestDepthReached:
+      minimalPolicyExperimentCounterState.earlySearchDecisionCount > 0
+        ? minimalPolicyExperimentCounterState.earlySearchBestDepthReachedSum /
+          minimalPolicyExperimentCounterState.earlySearchDecisionCount
+        : 0,
+    earlySearchBestDepthReachedPeak:
+      minimalPolicyExperimentCounterState.earlySearchBestDepthReachedPeak,
+    earlySearchCacheHitCount: minimalPolicyExperimentCounterState.earlySearchCacheHitCount,
+    earlySearchCacheMissCount: minimalPolicyExperimentCounterState.earlySearchCacheMissCount,
+    earlySearchDuplicatePrunedCount:
+      minimalPolicyExperimentCounterState.earlySearchDuplicatePrunedCount,
+    earlySearchNoLegalMovePrunedCount:
+      minimalPolicyExperimentCounterState.earlySearchNoLegalMovePrunedCount,
+    earlySearchNodeCapHitCount: minimalPolicyExperimentCounterState.earlySearchNodeCapHitCount,
+    earlySearchMaxFrontierSizePeak:
+      minimalPolicyExperimentCounterState.earlySearchMaxFrontierSizePeak,
+    criticalSearchDecisionCount: minimalPolicyExperimentCounterState.criticalSearchDecisionCount,
+    criticalSearchMeanMoveTimeMs:
+      minimalPolicyExperimentCounterState.criticalSearchDecisionCount > 0
+        ? minimalPolicyExperimentCounterState.criticalSearchTotalTimeMs /
+          minimalPolicyExperimentCounterState.criticalSearchDecisionCount
+        : 0,
+    criticalSearchMeanSearchTimeMs:
+      minimalPolicyExperimentCounterState.criticalSearchDecisionCount > 0
+        ? minimalPolicyExperimentCounterState.criticalSearchTotalSearchTimeMs /
+          minimalPolicyExperimentCounterState.criticalSearchDecisionCount
+        : 0,
+    criticalSearchMeanReachabilityTimeMs:
+      minimalPolicyExperimentCounterState.criticalSearchDecisionCount > 0
+        ? minimalPolicyExperimentCounterState.criticalSearchTotalReachabilityTimeMs /
+          minimalPolicyExperimentCounterState.criticalSearchDecisionCount
+        : 0,
+    criticalSearchSummaryCount: minimalPolicyExperimentCounterState.criticalSearchSummaryCount,
+    criticalSearchSpawnChildCount:
+      minimalPolicyExperimentCounterState.criticalSearchSpawnChildCount,
+    criticalSearchMeanSpawnChildCount:
+      minimalPolicyExperimentCounterState.criticalSearchSummaryCount > 0
+        ? minimalPolicyExperimentCounterState.criticalSearchSpawnChildCount /
+          minimalPolicyExperimentCounterState.criticalSearchSummaryCount
+        : 0,
+    criticalSearchRootEvaluationCount:
+      minimalPolicyExperimentCounterState.criticalSearchRootEvaluationCount,
+    criticalSearchExpandedNodeCount:
+      minimalPolicyExperimentCounterState.criticalSearchExpandedNodeCount,
+    criticalSearchMeanPerRootExpandedNodes:
+      minimalPolicyExperimentCounterState.criticalSearchRootEvaluationCount > 0
+        ? minimalPolicyExperimentCounterState.criticalSearchExpandedNodeCount /
+          minimalPolicyExperimentCounterState.criticalSearchRootEvaluationCount
+        : 0,
+    criticalSearchGeneratedNodeCount:
+      minimalPolicyExperimentCounterState.criticalSearchGeneratedNodeCount,
+    criticalSearchEnqueuedNodeCount:
+      minimalPolicyExperimentCounterState.criticalSearchEnqueuedNodeCount,
+    criticalSearchMeanPerRootEnqueuedNodes:
+      minimalPolicyExperimentCounterState.criticalSearchRootEvaluationCount > 0
+        ? minimalPolicyExperimentCounterState.criticalSearchEnqueuedNodeCount /
+          minimalPolicyExperimentCounterState.criticalSearchRootEvaluationCount
+        : 0,
+    criticalSearchEnqueueDuplicateSkippedCount:
+      minimalPolicyExperimentCounterState.criticalSearchEnqueueDuplicateSkippedCount,
+    criticalSearchEnqueueDominatedSkippedCount:
+      minimalPolicyExperimentCounterState.criticalSearchEnqueueDominatedSkippedCount,
+    criticalSearchPopDuplicateSkippedCount:
+      minimalPolicyExperimentCounterState.criticalSearchPopDuplicateSkippedCount,
+    criticalSearchFrontierPeakSizePeak:
+      minimalPolicyExperimentCounterState.criticalSearchFrontierPeakSizePeak,
+    criticalSearchMeanBestDepthReached:
+      minimalPolicyExperimentCounterState.criticalSearchDecisionCount > 0
+        ? minimalPolicyExperimentCounterState.criticalSearchBestDepthReachedSum /
+          minimalPolicyExperimentCounterState.criticalSearchDecisionCount
+        : 0,
+    criticalSearchBestDepthReachedPeak:
+      minimalPolicyExperimentCounterState.criticalSearchBestDepthReachedPeak,
+    criticalSearchCacheHitCount: minimalPolicyExperimentCounterState.criticalSearchCacheHitCount,
+    criticalSearchCacheMissCount: minimalPolicyExperimentCounterState.criticalSearchCacheMissCount,
+    criticalSearchDuplicatePrunedCount:
+      minimalPolicyExperimentCounterState.criticalSearchDuplicatePrunedCount,
+    criticalSearchNoLegalMovePrunedCount:
+      minimalPolicyExperimentCounterState.criticalSearchNoLegalMovePrunedCount,
+    criticalSearchNodeCapHitCount:
+      minimalPolicyExperimentCounterState.criticalSearchNodeCapHitCount,
+    criticalSearchMaxFrontierSizePeak:
+      minimalPolicyExperimentCounterState.criticalSearchMaxFrontierSizePeak,
     post7SearchDecisionCount: minimalPolicyExperimentCounterState.post7SearchDecisionCount,
     post7SearchMeanMoveTimeMs:
-      chosen > 0 && minimalPolicyExperimentCounterState.post7SearchDecisionCount > 0
+      minimalPolicyExperimentCounterState.post7SearchDecisionCount > 0
         ? minimalPolicyExperimentCounterState.post7SearchTotalTimeMs /
           minimalPolicyExperimentCounterState.post7SearchDecisionCount
         : 0,
+    post7SearchMeanSearchTimeMs:
+      minimalPolicyExperimentCounterState.post7SearchDecisionCount > 0
+        ? minimalPolicyExperimentCounterState.post7SearchTotalSearchTimeMs /
+          minimalPolicyExperimentCounterState.post7SearchDecisionCount
+        : 0,
+    post7SearchMeanReachabilityTimeMs:
+      minimalPolicyExperimentCounterState.post7SearchDecisionCount > 0
+        ? minimalPolicyExperimentCounterState.post7SearchTotalReachabilityTimeMs /
+          minimalPolicyExperimentCounterState.post7SearchDecisionCount
+        : 0,
+    post7SearchSummaryCount: minimalPolicyExperimentCounterState.post7SearchSummaryCount,
+    post7SearchSpawnChildCount: minimalPolicyExperimentCounterState.post7SearchSpawnChildCount,
+    post7SearchMeanSpawnChildCount:
+      minimalPolicyExperimentCounterState.post7SearchSummaryCount > 0
+        ? minimalPolicyExperimentCounterState.post7SearchSpawnChildCount /
+          minimalPolicyExperimentCounterState.post7SearchSummaryCount
+        : 0,
+    post7SearchRootEvaluationCount:
+      minimalPolicyExperimentCounterState.post7SearchRootEvaluationCount,
     post7SearchExpandedNodeCount: minimalPolicyExperimentCounterState.post7SearchExpandedNodeCount,
+    post7SearchMeanPerRootExpandedNodes:
+      minimalPolicyExperimentCounterState.post7SearchRootEvaluationCount > 0
+        ? minimalPolicyExperimentCounterState.post7SearchExpandedNodeCount /
+          minimalPolicyExperimentCounterState.post7SearchRootEvaluationCount
+        : 0,
+    post7SearchGeneratedNodeCount:
+      minimalPolicyExperimentCounterState.post7SearchGeneratedNodeCount,
+    post7SearchEnqueuedNodeCount:
+      minimalPolicyExperimentCounterState.post7SearchEnqueuedNodeCount,
+    post7SearchMeanPerRootEnqueuedNodes:
+      minimalPolicyExperimentCounterState.post7SearchRootEvaluationCount > 0
+        ? minimalPolicyExperimentCounterState.post7SearchEnqueuedNodeCount /
+          minimalPolicyExperimentCounterState.post7SearchRootEvaluationCount
+        : 0,
+    post7SearchEnqueueDuplicateSkippedCount:
+      minimalPolicyExperimentCounterState.post7SearchEnqueueDuplicateSkippedCount,
+    post7SearchEnqueueDominatedSkippedCount:
+      minimalPolicyExperimentCounterState.post7SearchEnqueueDominatedSkippedCount,
+    post7SearchPopDuplicateSkippedCount:
+      minimalPolicyExperimentCounterState.post7SearchPopDuplicateSkippedCount,
+    post7SearchFrontierPeakSizePeak:
+      minimalPolicyExperimentCounterState.post7SearchFrontierPeakSizePeak,
     post7SearchMeanBestDepthReached:
       minimalPolicyExperimentCounterState.post7SearchDecisionCount > 0
         ? minimalPolicyExperimentCounterState.post7SearchBestDepthReachedSum /
           minimalPolicyExperimentCounterState.post7SearchDecisionCount
         : 0,
+    post7SearchBestDepthReachedPeak:
+      minimalPolicyExperimentCounterState.post7SearchBestDepthReachedPeak,
     post7SearchChosenMeanSearchScore:
       chosen > 0
         ? minimalPolicyExperimentCounterState.post7SearchChosenSearchScoreSum / chosen
@@ -612,15 +1144,15 @@ export function snapshotMinimalPolicyExperimentDebugCounters(): MinimalPolicyExp
       chosen > 0
         ? minimalPolicyExperimentCounterState.post7SearchChosenReachableRatioSum / chosen
         : 0,
-    post7SearchChosenMeanWorstBestImmediateMergeLevel:
+    post7SearchChosenMeanWorstReachableImmediateMergeLevel:
       chosen > 0
-        ? minimalPolicyExperimentCounterState.post7SearchChosenMeanWorstBestImmediateMergeLevelSum /
-          chosen
+        ? minimalPolicyExperimentCounterState
+            .post7SearchChosenMeanWorstReachableImmediateMergeLevelSum / chosen
         : 0,
-    post7SearchChosenMeanWorstBestNearTermMergeLevel:
+    post7SearchChosenMeanWorstReachableNearTermMergeLevel:
       chosen > 0
-        ? minimalPolicyExperimentCounterState.post7SearchChosenMeanWorstBestNearTermMergeLevelSum /
-          chosen
+        ? minimalPolicyExperimentCounterState
+            .post7SearchChosenMeanWorstReachableNearTermMergeLevelSum / chosen
         : 0,
     post7SearchChosenMeanFinalNoMergeShare:
       chosen > 0
@@ -628,18 +1160,13 @@ export function snapshotMinimalPolicyExperimentDebugCounters(): MinimalPolicyExp
         : 0,
     post7SearchCacheHitCount: minimalPolicyExperimentCounterState.post7SearchCacheHitCount,
     post7SearchCacheMissCount: minimalPolicyExperimentCounterState.post7SearchCacheMissCount,
-    earlySearchDecisionCount: minimalPolicyExperimentCounterState.earlySearchDecisionCount,
-    earlySearchMeanMoveTimeMs:
-      minimalPolicyExperimentCounterState.earlySearchDecisionCount > 0
-        ? minimalPolicyExperimentCounterState.earlySearchTotalTimeMs /
-          minimalPolicyExperimentCounterState.earlySearchDecisionCount
-        : 0,
-    criticalSearchDecisionCount: minimalPolicyExperimentCounterState.criticalSearchDecisionCount,
-    criticalSearchMeanMoveTimeMs:
-      minimalPolicyExperimentCounterState.criticalSearchDecisionCount > 0
-        ? minimalPolicyExperimentCounterState.criticalSearchTotalTimeMs /
-          minimalPolicyExperimentCounterState.criticalSearchDecisionCount
-        : 0,
+    post7SearchDuplicatePrunedCount:
+      minimalPolicyExperimentCounterState.post7SearchDuplicatePrunedCount,
+    post7SearchNoLegalMovePrunedCount:
+      minimalPolicyExperimentCounterState.post7SearchNoLegalMovePrunedCount,
+    post7SearchNodeCapHitCount: minimalPolicyExperimentCounterState.post7SearchNodeCapHitCount,
+    post7SearchMaxFrontierSizePeak:
+      minimalPolicyExperimentCounterState.post7SearchMaxFrontierSizePeak,
   };
 }
 
@@ -697,11 +1224,6 @@ function canonicalStateKey(board: Board): bigint {
   return best;
 }
 
-function reachabilityBit(level: number): number {
-  if (level <= 0 || level >= 31) return 0;
-  return 1 << level;
-}
-
 function sampleSpawnChildrenWorstFirst(
   afterSlide: Board,
   spawnChildren: readonly Board[],
@@ -713,6 +1235,26 @@ function sampleSpawnChildrenWorstFirst(
   return [...spawnChildren]
     .sort((a, b) => compareSpawnRiskWorstFirst(a, b, anchorIndex))
     .slice(0, limit);
+}
+
+function sampleSpawnChildrenVariant(
+  afterSlide: Board,
+  spawnChildren: readonly Board[],
+  limit: number,
+  variant: number
+): readonly Board[] {
+  if (spawnChildren.length <= limit) return spawnChildren;
+  const anchorIndex = detectCornerWithMax(afterSlide);
+  const ordered =
+    anchorIndex == null
+      ? [...spawnChildren]
+      : [...spawnChildren].sort((a, b) => compareSpawnRiskWorstFirst(a, b, anchorIndex));
+  const offset = ((variant % ordered.length) + ordered.length) % ordered.length;
+  const selected: Board[] = [];
+  for (let i = 0; i < Math.min(limit, ordered.length); i++) {
+    selected.push(ordered[(offset + i) % ordered.length]!);
+  }
+  return selected;
 }
 
 function cachedSlide(board: Board, action: Direction): CachedSlideResult {
@@ -766,13 +1308,22 @@ function spawnChildrenForStageSearch(
 }
 
 function cachedViableCount(board: Board): number {
+  const timerStartMs = performance.now();
   const anchorIndex = detectCornerWithMax(board);
   const key = `${anchorIndex ?? "none"}|${boardKey(board)}`;
   const hit = minimalPolicyExperimentViableCountCache.get(key);
-  if (hit != null) return hit;
+  if (hit != null) {
+    if (activeSearchRuntimeBreakdown != null) {
+      activeSearchRuntimeBreakdown.viableCountTimeMs += performance.now() - timerStartMs;
+    }
+    return hit;
+  }
 
   const out = countViableMoves(board, anchorIndex);
   minimalPolicyExperimentViableCountCache.set(key, out);
+  if (activeSearchRuntimeBreakdown != null) {
+    activeSearchRuntimeBreakdown.viableCountTimeMs += performance.now() - timerStartMs;
+  }
   return out;
 }
 
@@ -831,10 +1382,14 @@ function highestNearTermMergeInfo(board: Board): HighestMergeInfo | null {
 }
 
 function evaluateMergeStateSignals(board: Board): MergeStateSignals {
+  const timerStartMs = performance.now();
   const key = boardKey(board);
   const hit = minimalPolicyExperimentStateSignalCache.get(key);
   if (hit != null) {
     minimalPolicyExperimentCounterState.stateSignalCacheHitCount++;
+    if (activeSearchRuntimeBreakdown != null) {
+      activeSearchRuntimeBreakdown.evalSignalsTimeMs += performance.now() - timerStartMs;
+    }
     return hit;
   }
 
@@ -854,6 +1409,9 @@ function evaluateMergeStateSignals(board: Board): MergeStateSignals {
     emptyCount: emptyCount(board),
   };
   minimalPolicyExperimentStateSignalCache.set(key, out);
+  if (activeSearchRuntimeBreakdown != null) {
+    activeSearchRuntimeBreakdown.evalSignalsTimeMs += performance.now() - timerStartMs;
+  }
   return out;
 }
 
@@ -993,22 +1551,68 @@ function getSearchStage(board: Board): SearchStage {
 }
 
 function getStageSearchConfig(stage: SearchStage): BestFirstSearchConfig {
-  if (stage === "post7") {
+  if (ORACLE_SEARCH_ENABLED && stage === "post7") {
     return {
-      horizon: 20,
-      reachabilityDepth: 10,
+      horizon: ORACLE_POST7_SEARCH_HORIZON,
+      reachabilityDepth: 14,
+      reachabilityBeamWidth: 6,
+      useAllSpawns: true,
+      spawnSampleLimit: LEN,
+      expandedNodeCap: ORACLE_POST7_EXPANDED_NODE_CAP,
+      decisionExpandedNodeCap: ORACLE_POST7_EXPANDED_NODE_CAP,
+      rootScreeningBudgetFraction: 0.25,
+      rootRefineTopK: 2,
+      maxFrontierSize: null,
+      maxPerRootFrontierSize: null,
+      maxPerSpawnLineFrontierSize: null,
+    };
+  }
+  if (ORACLE_SEARCH_ENABLED && stage === "critical") {
+    return {
+      horizon: ORACLE_CRITICAL_SEARCH_HORIZON,
+      reachabilityDepth: 12,
       reachabilityBeamWidth: 4,
       useAllSpawns: true,
       spawnSampleLimit: LEN,
+      expandedNodeCap: ORACLE_CRITICAL_EXPANDED_NODE_CAP,
+      decisionExpandedNodeCap: ORACLE_CRITICAL_EXPANDED_NODE_CAP,
+      rootScreeningBudgetFraction: 0.25,
+      rootRefineTopK: 2,
+      maxFrontierSize: null,
+      maxPerRootFrontierSize: null,
+      maxPerSpawnLineFrontierSize: null,
+    };
+  }
+  if (stage === "post7") {
+    return {
+      horizon: 20,
+      reachabilityDepth: 12,
+      reachabilityBeamWidth: 4,
+      useAllSpawns: true,
+      spawnSampleLimit: LEN,
+      expandedNodeCap: null,
+      decisionExpandedNodeCap: null,
+      rootScreeningBudgetFraction: 1,
+      rootRefineTopK: 0,
+      maxFrontierSize: null,
+      maxPerRootFrontierSize: null,
+      maxPerSpawnLineFrontierSize: null,
     };
   }
   if (stage === "critical") {
     return {
       horizon: 12,
-      reachabilityDepth: 8,
+      reachabilityDepth: 10,
       reachabilityBeamWidth: 3,
       useAllSpawns: false,
       spawnSampleLimit: 4,
+      expandedNodeCap: null,
+      decisionExpandedNodeCap: null,
+      rootScreeningBudgetFraction: 1,
+      rootRefineTopK: 0,
+      maxFrontierSize: null,
+      maxPerRootFrontierSize: null,
+      maxPerSpawnLineFrontierSize: null,
     };
   }
   return {
@@ -1017,6 +1621,13 @@ function getStageSearchConfig(stage: SearchStage): BestFirstSearchConfig {
     reachabilityBeamWidth: 2,
     useAllSpawns: false,
     spawnSampleLimit: 2,
+    expandedNodeCap: null,
+    decisionExpandedNodeCap: null,
+    rootScreeningBudgetFraction: 1,
+    rootRefineTopK: 0,
+    maxFrontierSize: null,
+    maxPerRootFrontierSize: null,
+    maxPerSpawnLineFrontierSize: null,
   };
 }
 
@@ -1024,6 +1635,10 @@ function getStageTimeBudgetMs(stage: SearchStage): number {
   if (stage === "post7") return POST7_SEARCH_TIME_BUDGET_MS;
   if (stage === "critical") return CRITICAL_SEARCH_TIME_BUDGET_MS;
   return EARLY_SEARCH_TIME_BUDGET_MS;
+}
+
+function getTargetLevelForReachability(board: Board): number {
+  return Math.max(1, maxTileLevel(board) - 2);
 }
 
 function isNoMergeState(signals: MergeStateSignals): boolean {
@@ -1068,7 +1683,6 @@ function compareSearchStateQuality(
 function compareSearchNodes(left: SearchNode, right: SearchNode): number {
   if (left.priority !== right.priority) return right.priority - left.priority;
   if (left.depth !== right.depth) return right.depth - left.depth;
-  if (left.targetLevel !== right.targetLevel) return right.targetLevel - left.targetLevel;
   return compareSearchStateQuality(
     left.signals,
     left.score,
@@ -1143,7 +1757,9 @@ function getSearchExpansionSpawnChildren(
 }
 
 function computeSearchStateScore(board: Board, signals: MergeStateSignals): number {
-  return (
+  const timerStartMs = activeSearchRuntimeBreakdown == null ? 0 : performance.now();
+  const out =
+    (
     scoreBoardMinimal(board) +
     signals.highestImmediateMergeLevel * 1_000_000 +
     signals.highestImmediateMergeCount * 100_000 +
@@ -1153,17 +1769,18 @@ function computeSearchStateScore(board: Board, signals: MergeStateSignals): numb
     signals.viableMoveCount * 100 +
     signals.emptyCount * 10
   );
+  if (activeSearchRuntimeBreakdown != null) {
+    activeSearchRuntimeBreakdown.scoreComputeTimeMs += performance.now() - timerStartMs;
+  }
+  return out;
 }
 
 function computeSearchNodePriority(
   score: number,
   signals: MergeStateSignals,
-  targetLevel: number,
-  reachable: boolean,
   depth: number
 ): number {
   let priority = score;
-  if (reachable) priority += 2_000_000 + targetLevel * 50_000;
   if (isNoMergeState(signals)) priority -= 1_000_000;
   else if (!signals.hasAnyMergeNow && !signals.hasAnyNearTermMerge) priority -= 200_000;
   priority += depth * 25;
@@ -1192,20 +1809,102 @@ function touchSearchTranspositionEntry(key: bigint, entry: CacheEntry): void {
   }
 }
 
+function resetSearchTranspositionTable(): void {
+  minimalPolicyExperimentSearchTranspositionTable.clear();
+  minimalPolicyExperimentSearchVisitClock = 0;
+}
+
+function createSearchRuntimeBreakdown(): SearchRuntimeBreakdown {
+  return {
+    canonicalTimeMs: 0,
+    heapTimeMs: 0,
+    expandTimeMs: 0,
+    evalSignalsTimeMs: 0,
+    viableCountTimeMs: 0,
+    scoreComputeTimeMs: 0,
+    transpositionCheckTimeMs: 0,
+    frontierDedupeTimeMs: 0,
+  };
+}
+
+function mergeDepthHistograms(left: DepthHistogram, right: DepthHistogram): DepthHistogram {
+  const merged: DepthHistogram = { ...left };
+  for (const [depth, count] of Object.entries(right)) {
+    const depthKey = Number(depth);
+    merged[depthKey] = (merged[depthKey] ?? 0) + count;
+  }
+  return merged;
+}
+
+function incrementDepthHistogram(histogram: DepthHistogram, depth: number): void {
+  histogram[depth] = (histogram[depth] ?? 0) + 1;
+}
+
+function mergeRuntimeBreakdowns(
+  left: SearchRuntimeBreakdown,
+  right: SearchRuntimeBreakdown
+): SearchRuntimeBreakdown {
+  return {
+    canonicalTimeMs: left.canonicalTimeMs + right.canonicalTimeMs,
+    heapTimeMs: left.heapTimeMs + right.heapTimeMs,
+    expandTimeMs: left.expandTimeMs + right.expandTimeMs,
+    evalSignalsTimeMs: left.evalSignalsTimeMs + right.evalSignalsTimeMs,
+    viableCountTimeMs: left.viableCountTimeMs + right.viableCountTimeMs,
+    scoreComputeTimeMs: left.scoreComputeTimeMs + right.scoreComputeTimeMs,
+    transpositionCheckTimeMs: left.transpositionCheckTimeMs + right.transpositionCheckTimeMs,
+    frontierDedupeTimeMs: left.frontierDedupeTimeMs + right.frontierDedupeTimeMs,
+  };
+}
+
+function toFrontierEntry(node: SearchNode): FrontierEntry {
+  return {
+    priority: node.priority,
+    score: node.score,
+    depth: node.depth,
+  };
+}
+
+function frontierEntryMatchesNode(entry: FrontierEntry | undefined, node: SearchNode): boolean {
+  return (
+    entry != null &&
+    entry.priority === node.priority &&
+    Math.abs(entry.score - node.score) <= SEARCH_SCORE_EPSILON &&
+    entry.depth === node.depth
+  );
+}
+
+function dominatesSearchCandidate(
+  existingScore: number,
+  existingDepth: number,
+  nextScore: number,
+  nextDepth: number
+): boolean {
+  return existingScore >= nextScore - SEARCH_SCORE_EPSILON && existingDepth <= nextDepth;
+}
+
+function shouldReplaceFrontierEntry(existing: FrontierEntry, next: SearchNode): boolean {
+  return next.score > existing.score + SEARCH_SCORE_EPSILON || next.depth < existing.depth;
+}
+
+function effectiveLineFrontierCap(config: BestFirstSearchConfig): number | null {
+  const caps = [
+    config.maxFrontierSize,
+    config.maxPerRootFrontierSize,
+    config.maxPerSpawnLineFrontierSize,
+  ].filter((value): value is number => value != null && value > 0);
+  if (caps.length === 0) return null;
+  return Math.min(...caps);
+}
+
 function shouldPruneSearchNode(entry: CacheEntry, node: SearchNode): boolean {
-  const bit = reachabilityBit(node.targetLevel);
-  const reachabilityImproves = bit !== 0 && (entry.reachableMask & bit) === 0;
-  if (reachabilityImproves) return false;
-  return entry.bestScoreSeen >= node.score && entry.depthSeen >= node.depth;
+  return dominatesSearchCandidate(entry.bestScoreSeen, entry.depthSeen, node.score, node.depth);
 }
 
 function updateSearchTranspositionEntry(key: bigint, node: SearchNode): void {
   const previous = minimalPolicyExperimentSearchTranspositionTable.get(key);
-  const bit = reachabilityBit(node.targetLevel);
   const next: CacheEntry = {
     bestScoreSeen: previous == null ? node.score : Math.max(previous.bestScoreSeen, node.score),
-    depthSeen: previous == null ? node.depth : Math.max(previous.depthSeen, node.depth),
-    reachableMask: (previous?.reachableMask ?? 0) | bit,
+    depthSeen: previous == null ? node.depth : Math.min(previous.depthSeen, node.depth),
     lastVisitTs: previous?.lastVisitTs ?? 0,
   };
   touchSearchTranspositionEntry(key, next);
@@ -1214,27 +1913,29 @@ function updateSearchTranspositionEntry(key: bigint, node: SearchNode): void {
 function buildReachabilityCacheKey(
   board: Board,
   level: number,
-  opts: ReachabilityOptions
+  opts: ReachabilityOptions,
+  variant: number
 ): string {
-  return `${canonicalStateKey(board).toString()}|${level}|${opts.depth}|${opts.beamWidth}|${opts.useAllSpawns ? 1 : 0}|${opts.spawnSampleLimit}`;
+  return `${canonicalStateKey(board).toString()}|${level}|${opts.depth}|${opts.beamWidth}|${opts.useAllSpawns ? 1 : 0}|${opts.spawnSampleLimit}|${variant}`;
 }
 
-function isPairReachable(board: Board, level: number, opts: ReachabilityOptions): boolean {
+function isPairReachable(board: Board, level: number, opts: ReachabilityOptions, variant = 0): boolean {
   if (level <= 0) return true;
   if (countTilesEqual(board, level) >= 2) return true;
 
-  const cacheKey = buildReachabilityCacheKey(board, level, opts);
+  const cacheKey = buildReachabilityCacheKey(board, level, opts, variant);
   const cacheHit = minimalPolicyExperimentPairReachabilityCache.get(cacheKey);
   if (cacheHit != null) return cacheHit;
 
   const rootSignals = evaluateMergeStateSignals(board);
+  const rootScore = computeSearchStateScore(board, rootSignals);
   let frontier: SearchNode[] = [
     {
       board,
+      stateKey: canonicalStateKey(board),
       depth: 0,
-      targetLevel: level,
-      score: computeSearchStateScore(board, rootSignals),
-      priority: 0,
+      score: rootScore,
+      priority: computeSearchNodePriority(rootScore, rootSignals, 0),
       signals: rootSignals,
     },
   ];
@@ -1251,10 +1952,11 @@ function isPairReachable(board: Board, level: number, opts: ReachabilityOptions)
           ? [transition.next]
           : opts.useAllSpawns
             ? spawnChildrenForMinimalPolicy(transition.next)
-            : sampleSpawnChildrenWorstFirst(
+            : sampleSpawnChildrenVariant(
                 transition.next,
                 spawnChildrenForMinimalPolicy(transition.next),
-                opts.spawnSampleLimit
+                opts.spawnSampleLimit,
+                variant + depth + DIR_ORDER.indexOf(action)
               );
 
         for (const child of spawnChildren) {
@@ -1269,10 +1971,10 @@ function isPairReachable(board: Board, level: number, opts: ReachabilityOptions)
           const childScore = computeSearchStateScore(child, childSignals);
           const childNode: SearchNode = {
             board: child,
+            stateKey: childKey,
             depth: depth + 1,
-            targetLevel: level,
             score: childScore,
-            priority: childScore,
+            priority: computeSearchNodePriority(childScore, childSignals, depth + 1),
             signals: childSignals,
           };
           const previous = nextByKey.get(childKey);
@@ -1312,151 +2014,287 @@ function isPairReachable(board: Board, level: number, opts: ReachabilityOptions)
   return false;
 }
 
+function evaluateRootReachabilitySummary(
+  spawnChildren: readonly Board[],
+  targetLevel: number,
+  stage: SearchStage,
+  opts: ReachabilityOptions
+): RootReachabilitySummary {
+  if (stage === "early") {
+    return {
+      targetLevel,
+      reachableRatio: null,
+      worstReachableImmediateMergeLevel: 0,
+      worstReachableNearTermMergeLevel: 0,
+      reachabilityTimeMs: 0,
+    };
+  }
+
+  const startMs = performance.now();
+  let reachableCount = 0;
+  let worstReachableImmediateMergeLevel = Number.POSITIVE_INFINITY;
+  let worstReachableNearTermMergeLevel = Number.POSITIVE_INFINITY;
+
+  for (const child of spawnChildren) {
+    if (!isPairReachable(child, targetLevel, opts)) continue;
+    reachableCount++;
+    const signals = evaluateMergeStateSignals(child);
+    if (signals.highestImmediateMergeLevel < worstReachableImmediateMergeLevel) {
+      worstReachableImmediateMergeLevel = signals.highestImmediateMergeLevel;
+    }
+    if (signals.highestNearTermMergeLevel < worstReachableNearTermMergeLevel) {
+      worstReachableNearTermMergeLevel = signals.highestNearTermMergeLevel;
+    }
+  }
+
+  return {
+    targetLevel,
+    reachableRatio: reachableCount / Math.max(1, spawnChildren.length),
+    worstReachableImmediateMergeLevel: Number.isFinite(worstReachableImmediateMergeLevel)
+      ? worstReachableImmediateMergeLevel
+      : 0,
+    worstReachableNearTermMergeLevel: Number.isFinite(worstReachableNearTermMergeLevel)
+      ? worstReachableNearTermMergeLevel
+      : 0,
+    reachabilityTimeMs: performance.now() - startMs,
+  };
+}
+
 function evaluateBestFirstSearch(
   board: Board,
   config: BestFirstSearchConfig,
   budgetMs: number
 ): SearchLineSummary {
-  const rootSignals = evaluateMergeStateSignals(board);
-  const rootTargetLevel = secondMaxTile(board);
-  const reachabilityOpts: ReachabilityOptions = {
-    depth: config.reachabilityDepth,
-    beamWidth: config.reachabilityBeamWidth,
-    useAllSpawns: config.useAllSpawns,
-    spawnSampleLimit: config.spawnSampleLimit,
-  };
-  const rootReachable = isPairReachable(board, rootTargetLevel, reachabilityOpts);
-  const rootScore = computeSearchStateScore(board, rootSignals);
+  const startMs = performance.now();
+  const runtimeBreakdown = createSearchRuntimeBreakdown();
+  const previousActiveRuntimeBreakdown = activeSearchRuntimeBreakdown;
+  activeSearchRuntimeBreakdown = runtimeBreakdown;
 
-  let bestScore = rootScore;
-  let bestDepthReached = 0;
-  let bestImmediateMergeLevelSeen = rootSignals.highestImmediateMergeLevel;
-  let bestNearTermMergeLevelSeen = rootSignals.highestNearTermMergeLevel;
-  let bestChainSustainMergeCountSeen = rootSignals.chainSustainMergeCount;
-  let bestSignals = rootSignals;
-  let reachableTarget = countTilesEqual(board, rootTargetLevel) >= 2 || rootReachable;
-  let expandedNodes = 0;
-  let cacheHitCount = 0;
-  let cacheMissCount = 0;
+  try {
+    const rootSignals = evaluateMergeStateSignals(board);
+    const rootScore = computeSearchStateScore(board, rootSignals);
+    const rootCanonicalStartMs = performance.now();
+    const rootStateKey = canonicalStateKey(board);
+    runtimeBreakdown.canonicalTimeMs += performance.now() - rootCanonicalStartMs;
 
-  if (!rootReachable) {
+    let bestScore = rootScore;
+    let bestDepthReached = 0;
+    let maxDepthReached = 0;
+    let bestImmediateMergeLevelSeen = rootSignals.highestImmediateMergeLevel;
+    let bestNearTermMergeLevelSeen = rootSignals.highestNearTermMergeLevel;
+    let bestChainSustainMergeCountSeen = rootSignals.chainSustainMergeCount;
+    let bestSignals = rootSignals;
+    let expandedNodes = 0;
+    let cacheHitCount = 0;
+    let cacheMissCount = 0;
+    let duplicatePrunedCount = 0;
+    let noLegalMovePrunedCount = 0;
+    let nodeCapHit = false;
+    let generatedNodes = 1;
+    let enqueuedNodes = 1;
+    let enqueueDuplicateSkipped = 0;
+    let enqueueDominatedSkipped = 0;
+    let popDuplicateSkipped = 0;
+    const expandedByDepth: DepthHistogram = {};
+    const enqueuedByDepth: DepthHistogram = {};
+    incrementDepthHistogram(enqueuedByDepth, 0);
+
+    const rootNode: SearchNode = {
+      board,
+      stateKey: rootStateKey,
+      depth: 0,
+      score: rootScore,
+      priority: computeSearchNodePriority(rootScore, rootSignals, 0),
+      signals: rootSignals,
+    };
+    const frontier = new MaxPriorityQueue<SearchNode>(compareSearchNodes);
+    const frontierBest = new Map<StateKey, FrontierEntry>();
+    const rootPushStartMs = performance.now();
+    frontier.push(rootNode);
+    runtimeBreakdown.heapTimeMs += performance.now() - rootPushStartMs;
+    frontierBest.set(rootStateKey, toFrontierEntry(rootNode));
+    let maxFrontierSize = frontier.size;
+    let frontierPeakSize = frontierBest.size;
+    const deadline = config.expandedNodeCap == null ? startMs + Math.max(1, budgetMs) : null;
+    const lineFrontierCap = effectiveLineFrontierCap(config);
+
+    while (frontier.size > 0) {
+      if (deadline != null && performance.now() >= deadline) break;
+      if (config.expandedNodeCap != null && expandedNodes >= config.expandedNodeCap) {
+        nodeCapHit = true;
+        break;
+      }
+      const popStartMs = performance.now();
+      const node = frontier.pop();
+      runtimeBreakdown.heapTimeMs += performance.now() - popStartMs;
+      if (node == null) break;
+
+      const frontierMatchStartMs = performance.now();
+      if (!frontierEntryMatchesNode(frontierBest.get(node.stateKey), node)) {
+        runtimeBreakdown.frontierDedupeTimeMs += performance.now() - frontierMatchStartMs;
+        popDuplicateSkipped++;
+        continue;
+      }
+      frontierBest.delete(node.stateKey);
+      runtimeBreakdown.frontierDedupeTimeMs += performance.now() - frontierMatchStartMs;
+
+      const transpositionStartMs = performance.now();
+      const cacheEntry = minimalPolicyExperimentSearchTranspositionTable.get(node.stateKey);
+      if (cacheEntry != null) {
+        cacheHitCount++;
+        if (shouldPruneSearchNode(cacheEntry, node)) {
+          runtimeBreakdown.transpositionCheckTimeMs += performance.now() - transpositionStartMs;
+          duplicatePrunedCount++;
+          continue;
+        }
+      } else {
+        cacheMissCount++;
+      }
+      updateSearchTranspositionEntry(node.stateKey, node);
+      runtimeBreakdown.transpositionCheckTimeMs += performance.now() - transpositionStartMs;
+
+      expandedNodes++;
+      incrementDepthHistogram(expandedByDepth, node.depth);
+
+      if (node.score > bestScore + SEARCH_SCORE_EPSILON) {
+        bestScore = node.score;
+        bestDepthReached = node.depth;
+        bestSignals = node.signals;
+      } else if (Math.abs(node.score - bestScore) <= SEARCH_SCORE_EPSILON && node.depth > bestDepthReached) {
+        bestDepthReached = node.depth;
+      }
+      if (node.depth > maxDepthReached) maxDepthReached = node.depth;
+      if (node.signals.highestImmediateMergeLevel > bestImmediateMergeLevelSeen) {
+        bestImmediateMergeLevelSeen = node.signals.highestImmediateMergeLevel;
+      }
+      if (node.signals.highestNearTermMergeLevel > bestNearTermMergeLevelSeen) {
+        bestNearTermMergeLevelSeen = node.signals.highestNearTermMergeLevel;
+      }
+      if (node.signals.chainSustainMergeCount > bestChainSustainMergeCountSeen) {
+        bestChainSustainMergeCountSeen = node.signals.chainSustainMergeCount;
+      }
+
+      if (node.depth >= config.horizon) continue;
+      const legalActionsStartMs = performance.now();
+      const actions = legalActions(node.board);
+      runtimeBreakdown.expandTimeMs += performance.now() - legalActionsStartMs;
+      if (actions.length === 0) {
+        noLegalMovePrunedCount++;
+        continue;
+      }
+
+      for (const action of actions) {
+        const expandActionStartMs = performance.now();
+        const transition = cachedSlide(node.board, action);
+        if (!transition.moved) {
+          runtimeBreakdown.expandTimeMs += performance.now() - expandActionStartMs;
+          continue;
+        }
+        const spawnChildren = transition.win
+          ? [transition.next]
+          : getSearchExpansionSpawnChildren(transition.next, config);
+        runtimeBreakdown.expandTimeMs += performance.now() - expandActionStartMs;
+
+        for (const child of spawnChildren) {
+          generatedNodes++;
+          const childDepth = node.depth + 1;
+          const canonicalStartMs = performance.now();
+          const childStateKey = canonicalStateKey(child);
+          runtimeBreakdown.canonicalTimeMs += performance.now() - canonicalStartMs;
+
+          const childNode: SearchNode = {
+            board: child,
+            stateKey: childStateKey,
+            depth: childDepth,
+            score: 0,
+            priority: 0,
+            signals: rootSignals,
+          };
+
+          const dedupeStartMs = performance.now();
+          const existingFrontier = frontierBest.get(childStateKey);
+          if (existingFrontier != null && existingFrontier.depth <= childDepth) {
+            runtimeBreakdown.frontierDedupeTimeMs += performance.now() - dedupeStartMs;
+            enqueueDuplicateSkipped++;
+            continue;
+          }
+          runtimeBreakdown.frontierDedupeTimeMs += performance.now() - dedupeStartMs;
+
+          const childTranspositionStartMs = performance.now();
+          const closedEntry = minimalPolicyExperimentSearchTranspositionTable.get(childStateKey);
+          if (closedEntry != null && closedEntry.depthSeen <= childDepth) {
+            runtimeBreakdown.transpositionCheckTimeMs += performance.now() - childTranspositionStartMs;
+            enqueueDominatedSkipped++;
+            continue;
+          }
+          runtimeBreakdown.transpositionCheckTimeMs += performance.now() - childTranspositionStartMs;
+
+          if (lineFrontierCap != null && frontierBest.size >= lineFrontierCap && existingFrontier == null) {
+            enqueueDominatedSkipped++;
+            continue;
+          }
+
+          const childSignals = evaluateMergeStateSignals(child);
+          const childScore = computeSearchStateScore(child, childSignals);
+          const childPriority = computeSearchNodePriority(childScore, childSignals, childDepth);
+          childNode.score = childScore;
+          childNode.priority = childPriority;
+          childNode.signals = childSignals;
+
+          const replaceCheckStartMs = performance.now();
+          if (existingFrontier != null && !shouldReplaceFrontierEntry(existingFrontier, childNode)) {
+            runtimeBreakdown.frontierDedupeTimeMs += performance.now() - replaceCheckStartMs;
+            enqueueDuplicateSkipped++;
+            continue;
+          }
+          frontierBest.set(childStateKey, toFrontierEntry(childNode));
+          runtimeBreakdown.frontierDedupeTimeMs += performance.now() - replaceCheckStartMs;
+
+          const pushStartMs = performance.now();
+          frontier.push(childNode);
+          runtimeBreakdown.heapTimeMs += performance.now() - pushStartMs;
+          enqueuedNodes++;
+          incrementDepthHistogram(enqueuedByDepth, childDepth);
+          if (frontier.size > maxFrontierSize) maxFrontierSize = frontier.size;
+          if (frontierBest.size > frontierPeakSize) frontierPeakSize = frontierBest.size;
+        }
+      }
+    }
+
     return {
       bestScore,
       bestDepthReached,
+      maxDepthReached,
       expandedNodes,
       cacheHitCount,
       cacheMissCount,
-      reachableTarget: false,
+      duplicatePrunedCount,
+      noLegalMovePrunedCount,
+      nodeCapHit,
+      maxFrontierSize,
+      generatedNodes,
+      enqueuedNodes,
+      enqueueDuplicateSkipped,
+      enqueueDominatedSkipped,
+      popDuplicateSkipped,
+      frontierPeakSize,
+      expandedByDepth,
+      enqueuedByDepth,
+      runtimeBreakdown,
+      searchTimeMs: performance.now() - startMs,
       bestImmediateMergeLevelSeen,
       bestNearTermMergeLevelSeen,
       bestChainSustainMergeCountSeen,
-      finalHighestImmediateMergeLevel: rootSignals.highestImmediateMergeLevel,
-      finalHighestNearTermMergeLevel: rootSignals.highestNearTermMergeLevel,
-      finalChainSustainMergeCount: rootSignals.chainSustainMergeCount,
-      finalViableMoveCount: rootSignals.viableMoveCount,
-      finalEmptyCount: rootSignals.emptyCount,
-      finalNoMerge: isNoMergeState(rootSignals),
+      finalHighestImmediateMergeLevel: bestSignals.highestImmediateMergeLevel,
+      finalHighestNearTermMergeLevel: bestSignals.highestNearTermMergeLevel,
+      finalChainSustainMergeCount: bestSignals.chainSustainMergeCount,
+      finalViableMoveCount: bestSignals.viableMoveCount,
+      finalEmptyCount: bestSignals.emptyCount,
+      finalNoMerge: isNoMergeState(bestSignals),
     };
+  } finally {
+    activeSearchRuntimeBreakdown = previousActiveRuntimeBreakdown;
   }
-
-  const rootNode: SearchNode = {
-    board,
-    depth: 0,
-    targetLevel: rootTargetLevel,
-    score: rootScore,
-    priority: computeSearchNodePriority(rootScore, rootSignals, rootTargetLevel, rootReachable, 0),
-    signals: rootSignals,
-  };
-  const frontier = new MaxPriorityQueue<SearchNode>(compareSearchNodes);
-  frontier.push(rootNode);
-  const deadline = performance.now() + Math.max(1, budgetMs);
-
-  while (frontier.size > 0 && performance.now() < deadline) {
-    const node = frontier.pop();
-    if (node == null) break;
-
-    const key = canonicalStateKey(node.board);
-    const cacheEntry = minimalPolicyExperimentSearchTranspositionTable.get(key);
-    if (cacheEntry != null) {
-      cacheHitCount++;
-      if (shouldPruneSearchNode(cacheEntry, node)) continue;
-    } else {
-      cacheMissCount++;
-    }
-
-    updateSearchTranspositionEntry(key, node);
-    expandedNodes++;
-
-    if (node.score > bestScore) {
-      bestScore = node.score;
-      bestSignals = node.signals;
-    }
-    if (node.depth > bestDepthReached) bestDepthReached = node.depth;
-    if (node.signals.highestImmediateMergeLevel > bestImmediateMergeLevelSeen) {
-      bestImmediateMergeLevelSeen = node.signals.highestImmediateMergeLevel;
-    }
-    if (node.signals.highestNearTermMergeLevel > bestNearTermMergeLevelSeen) {
-      bestNearTermMergeLevelSeen = node.signals.highestNearTermMergeLevel;
-    }
-    if (node.signals.chainSustainMergeCount > bestChainSustainMergeCountSeen) {
-      bestChainSustainMergeCountSeen = node.signals.chainSustainMergeCount;
-    }
-    if (node.targetLevel > 0 && countTilesEqual(node.board, node.targetLevel) >= 2) {
-      reachableTarget = true;
-    }
-
-    if (node.depth >= config.horizon) continue;
-    const actions = legalActions(node.board);
-    if (actions.length === 0) continue;
-
-    for (const action of actions) {
-      const transition = cachedSlide(node.board, action);
-      if (!transition.moved) continue;
-      const spawnChildren = transition.win
-        ? [transition.next]
-        : getSearchExpansionSpawnChildren(transition.next, config);
-
-      for (const child of spawnChildren) {
-        const childSignals = evaluateMergeStateSignals(child);
-        const childTargetLevel = secondMaxTile(child);
-        const childReachable = isPairReachable(child, childTargetLevel, reachabilityOpts);
-        if (!childReachable) continue;
-        const childScore = computeSearchStateScore(child, childSignals);
-        frontier.push({
-          board: child,
-          depth: node.depth + 1,
-          targetLevel: childTargetLevel,
-          score: childScore,
-          priority: computeSearchNodePriority(
-            childScore,
-            childSignals,
-            childTargetLevel,
-            childReachable,
-            node.depth + 1
-          ),
-          signals: childSignals,
-        });
-      }
-    }
-  }
-
-  return {
-    bestScore,
-    bestDepthReached,
-    expandedNodes,
-    cacheHitCount,
-    cacheMissCount,
-    reachableTarget,
-    bestImmediateMergeLevelSeen,
-    bestNearTermMergeLevelSeen,
-    bestChainSustainMergeCountSeen,
-    finalHighestImmediateMergeLevel: bestSignals.highestImmediateMergeLevel,
-    finalHighestNearTermMergeLevel: bestSignals.highestNearTermMergeLevel,
-    finalChainSustainMergeCount: bestSignals.chainSustainMergeCount,
-    finalViableMoveCount: bestSignals.viableMoveCount,
-    finalEmptyCount: bestSignals.emptyCount,
-    finalNoMerge: isNoMergeState(bestSignals),
-  };
 }
 
 function filterPost7SearchCandidates(
@@ -1479,16 +2317,24 @@ function evaluatePost7MoveSearchSummary(
   transition: MoveMergeOpportunitySummary,
   config: BestFirstSearchConfig,
   stage: SearchStage,
-  budgetMs: number
+  budgetMs: number,
+  includeReachability = true
 ): MoveSearchSummary {
   const transitionResult = cachedSlide(board, transition.direction);
-  const spawnChildren = transitionResult.win
+  const searchSpawnChildren = transitionResult.win
     ? [transitionResult.next]
     : spawnChildrenForStageSearch(transitionResult.next, stage);
+  const reachabilitySpawnChildren = transitionResult.win
+    ? [transitionResult.next]
+    : spawnChildrenForMinimalPolicy(transitionResult.next);
+  const targetLevel = getTargetLevelForReachability(transitionResult.next);
+  const reachabilityOpts: ReachabilityOptions = {
+    depth: config.reachabilityDepth,
+    beamWidth: config.reachabilityBeamWidth,
+    useAllSpawns: config.useAllSpawns,
+    spawnSampleLimit: config.spawnSampleLimit,
+  };
 
-  let worstBestImmediateMergeLevelSeen = Number.POSITIVE_INFINITY;
-  let worstBestNearTermMergeLevelSeen = Number.POSITIVE_INFINITY;
-  let reachableTargetCount = 0;
   let finalNoMergeCount = 0;
   let bestImmediateMergeLevelSeenSum = 0;
   let bestNearTermMergeLevelSeenSum = 0;
@@ -1499,18 +2345,41 @@ function evaluatePost7MoveSearchSummary(
   let expandedNodes = 0;
   let cacheHitCount = 0;
   let cacheMissCount = 0;
+  let duplicatePrunedCount = 0;
+  let noLegalMovePrunedCount = 0;
+  let nodeCapHitCount = 0;
+  let maxFrontierSize = 0;
+  let generatedNodes = 0;
+  let enqueuedNodes = 0;
+  let enqueueDuplicateSkipped = 0;
+  let enqueueDominatedSkipped = 0;
+  let popDuplicateSkipped = 0;
+  let frontierPeakSize = 0;
   let bestDepthReached = 0;
-  const perChildBudgetMs = Math.max(1, budgetMs / Math.max(1, spawnChildren.length));
+  let maxDepthReached = 0;
+  let topCandidateScore = Number.NEGATIVE_INFINITY;
+  let topCandidateDepth = 0;
+  let expandedByDepth: DepthHistogram = {};
+  let enqueuedByDepth: DepthHistogram = {};
+  let runtimeBreakdown = createSearchRuntimeBreakdown();
+  let searchTimeMs = 0;
+  const perChildBudgetMs = Math.max(1, budgetMs / Math.max(1, searchSpawnChildren.length));
+  let remainingExpandedNodeCap = config.expandedNodeCap;
 
-  for (const child of spawnChildren) {
-    const lineSummary = evaluateBestFirstSearch(child, config, perChildBudgetMs);
-    if (lineSummary.bestImmediateMergeLevelSeen < worstBestImmediateMergeLevelSeen) {
-      worstBestImmediateMergeLevelSeen = lineSummary.bestImmediateMergeLevelSeen;
-    }
-    if (lineSummary.bestNearTermMergeLevelSeen < worstBestNearTermMergeLevelSeen) {
-      worstBestNearTermMergeLevelSeen = lineSummary.bestNearTermMergeLevelSeen;
-    }
-    if (lineSummary.reachableTarget) reachableTargetCount++;
+  for (let i = 0; i < searchSpawnChildren.length; i++) {
+    const child = searchSpawnChildren[i]!;
+    const childrenLeft = searchSpawnChildren.length - i;
+    const lineConfig =
+      remainingExpandedNodeCap == null
+        ? config
+        : {
+            ...config,
+            expandedNodeCap: Math.max(
+              1,
+              Math.floor(remainingExpandedNodeCap / Math.max(1, childrenLeft))
+            ),
+          };
+    const lineSummary = evaluateBestFirstSearch(child, lineConfig, perChildBudgetMs);
     if (lineSummary.finalNoMerge) finalNoMergeCount++;
     bestImmediateMergeLevelSeenSum += lineSummary.bestImmediateMergeLevelSeen;
     bestNearTermMergeLevelSeenSum += lineSummary.bestNearTermMergeLevelSeen;
@@ -1521,22 +2390,62 @@ function evaluatePost7MoveSearchSummary(
     expandedNodes += lineSummary.expandedNodes;
     cacheHitCount += lineSummary.cacheHitCount;
     cacheMissCount += lineSummary.cacheMissCount;
+    duplicatePrunedCount += lineSummary.duplicatePrunedCount;
+    noLegalMovePrunedCount += lineSummary.noLegalMovePrunedCount;
+    if (lineSummary.nodeCapHit) nodeCapHitCount++;
+    if (lineSummary.maxFrontierSize > maxFrontierSize) {
+      maxFrontierSize = lineSummary.maxFrontierSize;
+    }
+    generatedNodes += lineSummary.generatedNodes;
+    enqueuedNodes += lineSummary.enqueuedNodes;
+    enqueueDuplicateSkipped += lineSummary.enqueueDuplicateSkipped;
+    enqueueDominatedSkipped += lineSummary.enqueueDominatedSkipped;
+    popDuplicateSkipped += lineSummary.popDuplicateSkipped;
+    if (lineSummary.frontierPeakSize > frontierPeakSize) {
+      frontierPeakSize = lineSummary.frontierPeakSize;
+    }
+    expandedByDepth = mergeDepthHistograms(expandedByDepth, lineSummary.expandedByDepth);
+    enqueuedByDepth = mergeDepthHistograms(enqueuedByDepth, lineSummary.enqueuedByDepth);
+    runtimeBreakdown = mergeRuntimeBreakdowns(runtimeBreakdown, lineSummary.runtimeBreakdown);
+    searchTimeMs += lineSummary.searchTimeMs;
+    if (remainingExpandedNodeCap != null) {
+      remainingExpandedNodeCap = Math.max(0, remainingExpandedNodeCap - lineSummary.expandedNodes);
+    }
+    if (
+      lineSummary.bestScore > topCandidateScore + SEARCH_SCORE_EPSILON ||
+      (Math.abs(lineSummary.bestScore - topCandidateScore) <= SEARCH_SCORE_EPSILON &&
+        lineSummary.bestDepthReached > topCandidateDepth)
+    ) {
+      topCandidateScore = lineSummary.bestScore;
+      topCandidateDepth = lineSummary.bestDepthReached;
+    }
     if (lineSummary.bestDepthReached > bestDepthReached) {
       bestDepthReached = lineSummary.bestDepthReached;
     }
+    if (lineSummary.maxDepthReached > maxDepthReached) {
+      maxDepthReached = lineSummary.maxDepthReached;
+    }
   }
 
-  const spawnCount = Math.max(1, spawnChildren.length);
+  const reachabilitySummary = includeReachability
+    ? evaluateRootReachabilitySummary(reachabilitySpawnChildren, targetLevel, stage, reachabilityOpts)
+    : {
+        targetLevel,
+        reachableRatio: null,
+        worstReachableImmediateMergeLevel: 0,
+        worstReachableNearTermMergeLevel: 0,
+        reachabilityTimeMs: 0,
+      };
+  const spawnCount = Math.max(1, searchSpawnChildren.length);
   const cacheTotal = cacheHitCount + cacheMissCount;
   return {
     transition,
     config,
+    targetLevel,
     searchScore: bestScoreSum / spawnCount,
-    reachableRatio: reachableTargetCount / spawnCount,
-    worstBestImmediateMergeLevelSeen:
-      Number.isFinite(worstBestImmediateMergeLevelSeen) ? worstBestImmediateMergeLevelSeen : 0,
-    worstBestNearTermMergeLevelSeen:
-      Number.isFinite(worstBestNearTermMergeLevelSeen) ? worstBestNearTermMergeLevelSeen : 0,
+    reachableRatio: reachabilitySummary.reachableRatio,
+    worstReachableImmediateMergeLevel: reachabilitySummary.worstReachableImmediateMergeLevel,
+    worstReachableNearTermMergeLevel: reachabilitySummary.worstReachableNearTermMergeLevel,
     finalNoMergeShare: finalNoMergeCount / spawnCount,
     meanBestImmediateMergeLevelSeen: bestImmediateMergeLevelSeenSum / spawnCount,
     meanBestNearTermMergeLevelSeen: bestNearTermMergeLevelSeenSum / spawnCount,
@@ -1544,14 +2453,60 @@ function evaluatePost7MoveSearchSummary(
     meanFinalViableMoveCount: finalViableMoveCountSum / spawnCount,
     meanFinalEmptyCount: finalEmptyCountSum / spawnCount,
     bestDepthReached,
+    maxDepthReached,
     expandedNodes,
     cacheHitCount,
     cacheMissCount,
     cacheHitRate: cacheTotal > 0 ? cacheHitCount / cacheTotal : 0,
+    searchSpawnChildCount: searchSpawnChildren.length,
+    searchSummaryCount: searchSpawnChildren.length,
+    duplicatePrunedCount,
+    noLegalMovePrunedCount,
+    nodeCapHitCount,
+    maxFrontierSize,
+    generatedNodes,
+    enqueuedNodes,
+    enqueueDuplicateSkipped,
+    enqueueDominatedSkipped,
+    popDuplicateSkipped,
+    frontierPeakSize,
+    expandedByDepth,
+    enqueuedByDepth,
+    runtimeBreakdown,
+    topCandidateDepth,
+    topCandidateScore,
+    searchTimeMs,
+    reachabilityTimeMs: reachabilitySummary.reachabilityTimeMs,
   };
 }
 
-function comparePost7MoveSearchSummaries(
+function hasKnownReachability(summary: MoveSearchSummary): boolean {
+  return summary.reachableRatio != null;
+}
+
+function compareSearchEvidenceMoveSearchSummaries(
+  left: MoveSearchSummary,
+  right: MoveSearchSummary
+): number {
+  if (left.maxDepthReached !== right.maxDepthReached) {
+    return right.maxDepthReached - left.maxDepthReached;
+  }
+  if (left.topCandidateDepth !== right.topCandidateDepth) {
+    return right.topCandidateDepth - left.topCandidateDepth;
+  }
+  if (left.searchScore !== right.searchScore) {
+    return right.searchScore - left.searchScore;
+  }
+  if (left.topCandidateScore !== right.topCandidateScore) {
+    return right.topCandidateScore - left.topCandidateScore;
+  }
+  if (left.bestDepthReached !== right.bestDepthReached) {
+    return right.bestDepthReached - left.bestDepthReached;
+  }
+  return 0;
+}
+
+function compareOracleScreeningMoveSearchSummaries(
   left: MoveSearchSummary,
   right: MoveSearchSummary
 ): number {
@@ -1561,20 +2516,68 @@ function comparePost7MoveSearchSummaries(
   if (left.transition.capturedImmediate66 !== right.transition.capturedImmediate66) {
     return left.transition.capturedImmediate66 ? -1 : 1;
   }
-  if (left.reachableRatio !== right.reachableRatio) {
-    return right.reachableRatio - left.reachableRatio;
+  const searchEvidenceCompare = compareSearchEvidenceMoveSearchSummaries(left, right);
+  if (searchEvidenceCompare !== 0) return searchEvidenceCompare;
+  if (left.transition.missedImmediateHighMerge !== right.transition.missedImmediateHighMerge) {
+    return left.transition.missedImmediateHighMerge ? 1 : -1;
   }
-  if (left.worstBestImmediateMergeLevelSeen !== right.worstBestImmediateMergeLevelSeen) {
-    return right.worstBestImmediateMergeLevelSeen - left.worstBestImmediateMergeLevelSeen;
+  if (left.transition.noMergeShare !== right.transition.noMergeShare) {
+    return left.transition.noMergeShare - right.transition.noMergeShare;
   }
-  if (left.worstBestNearTermMergeLevelSeen !== right.worstBestNearTermMergeLevelSeen) {
-    return right.worstBestNearTermMergeLevelSeen - left.worstBestNearTermMergeLevelSeen;
+  if (left.meanBestImmediateMergeLevelSeen !== right.meanBestImmediateMergeLevelSeen) {
+    return right.meanBestImmediateMergeLevelSeen - left.meanBestImmediateMergeLevelSeen;
   }
-  if (left.finalNoMergeShare !== right.finalNoMergeShare) {
-    return left.finalNoMergeShare - right.finalNoMergeShare;
+  if (left.meanBestNearTermMergeLevelSeen !== right.meanBestNearTermMergeLevelSeen) {
+    return right.meanBestNearTermMergeLevelSeen - left.meanBestNearTermMergeLevelSeen;
   }
-  if (left.searchScore !== right.searchScore) {
-    return right.searchScore - left.searchScore;
+  return compareMoveMergeOpportunitySummaries(left.transition, right.transition);
+}
+
+function comparePost7MoveSearchSummaries(
+  left: MoveSearchSummary,
+  right: MoveSearchSummary,
+  stage: SearchStage
+): number {
+  if (left.transition.capturedImmediate77 !== right.transition.capturedImmediate77) {
+    return left.transition.capturedImmediate77 ? -1 : 1;
+  }
+  if (left.transition.capturedImmediate66 !== right.transition.capturedImmediate66) {
+    return left.transition.capturedImmediate66 ? -1 : 1;
+  }
+  if (stage !== "early") {
+    const leftHasReachability = hasKnownReachability(left);
+    const rightHasReachability = hasKnownReachability(right);
+    if (leftHasReachability && rightHasReachability && left.reachableRatio !== right.reachableRatio) {
+      return (right.reachableRatio ?? 0) - (left.reachableRatio ?? 0);
+    }
+  }
+  const searchEvidenceCompare = compareSearchEvidenceMoveSearchSummaries(left, right);
+  if (searchEvidenceCompare !== 0) {
+    return searchEvidenceCompare;
+  }
+  if (left.transition.missedImmediateHighMerge !== right.transition.missedImmediateHighMerge) {
+    return left.transition.missedImmediateHighMerge ? 1 : -1;
+  }
+  if (stage !== "early") {
+    const leftHasReachability = hasKnownReachability(left);
+    const rightHasReachability = hasKnownReachability(right);
+    if (
+      leftHasReachability &&
+      rightHasReachability &&
+      left.worstReachableImmediateMergeLevel !== right.worstReachableImmediateMergeLevel
+    ) {
+      return right.worstReachableImmediateMergeLevel - left.worstReachableImmediateMergeLevel;
+    }
+    if (
+      leftHasReachability &&
+      rightHasReachability &&
+      left.worstReachableNearTermMergeLevel !== right.worstReachableNearTermMergeLevel
+    ) {
+      return right.worstReachableNearTermMergeLevel - left.worstReachableNearTermMergeLevel;
+    }
+  }
+  if (left.transition.noMergeShare !== right.transition.noMergeShare) {
+    return left.transition.noMergeShare - right.transition.noMergeShare;
   }
   if (left.meanBestImmediateMergeLevelSeen !== right.meanBestImmediateMergeLevelSeen) {
     return right.meanBestImmediateMergeLevelSeen - left.meanBestImmediateMergeLevelSeen;
@@ -1584,9 +2587,6 @@ function comparePost7MoveSearchSummaries(
   }
   if (left.meanBestChainSustainMergeCountSeen !== right.meanBestChainSustainMergeCountSeen) {
     return right.meanBestChainSustainMergeCountSeen - left.meanBestChainSustainMergeCountSeen;
-  }
-  if (left.transition.noMergeShare !== right.transition.noMergeShare) {
-    return left.transition.noMergeShare - right.transition.noMergeShare;
   }
   if (
     left.transition.worstHighestImmediateMergeLevel !== right.transition.worstHighestImmediateMergeLevel
@@ -1611,7 +2611,249 @@ function comparePost7MoveSearchSummaries(
   if (left.meanFinalEmptyCount !== right.meanFinalEmptyCount) {
     return right.meanFinalEmptyCount - left.meanFinalEmptyCount;
   }
+  if (left.finalNoMergeShare !== right.finalNoMergeShare) {
+    return left.finalNoMergeShare - right.finalNoMergeShare;
+  }
   return compareMoveMergeOpportunitySummaries(left.transition, right.transition);
+}
+
+function evaluateSearchPass(
+  board: Board,
+  candidates: readonly MoveMergeOpportunitySummary[],
+  config: BestFirstSearchConfig,
+  stage: SearchStage,
+  decisionDeadlineMs: number | null,
+  includeReachability: boolean
+): SearchPassSummary {
+  const summaries: MoveSearchSummary[] = [];
+  let expandedNodes = 0;
+  let cacheHitCount = 0;
+  let cacheMissCount = 0;
+  let searchTimeMs = 0;
+  let reachabilityTimeMs = 0;
+  let searchSummaryCount = 0;
+  let searchSpawnChildCount = 0;
+  let duplicatePrunedCount = 0;
+  let noLegalMovePrunedCount = 0;
+  let nodeCapHitCount = 0;
+  let maxFrontierSizePeak = 0;
+  let generatedNodes = 0;
+  let enqueuedNodes = 0;
+  let enqueueDuplicateSkipped = 0;
+  let enqueueDominatedSkipped = 0;
+  let popDuplicateSkipped = 0;
+  let frontierPeakSize = 0;
+  let expandedByDepth: DepthHistogram = {};
+  let enqueuedByDepth: DepthHistogram = {};
+  let runtimeBreakdown = createSearchRuntimeBreakdown();
+  let remainingExpandedNodeCap = config.expandedNodeCap;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidatesLeft = candidates.length - i;
+    const candidateBudgetMs =
+      decisionDeadlineMs == null
+        ? getStageTimeBudgetMs(stage)
+        : Math.max(1, Math.max(1, decisionDeadlineMs - performance.now()) / Math.max(1, candidatesLeft));
+    const candidateConfig =
+      remainingExpandedNodeCap == null
+        ? config
+        : {
+            ...config,
+            expandedNodeCap: Math.max(
+              1,
+              Math.floor(remainingExpandedNodeCap / Math.max(1, candidatesLeft))
+            ),
+          };
+    const summary = evaluatePost7MoveSearchSummary(
+      board,
+      candidates[i]!,
+      candidateConfig,
+      stage,
+      candidateBudgetMs,
+      includeReachability
+    );
+    summaries.push(summary);
+    expandedNodes += summary.expandedNodes;
+    cacheHitCount += summary.cacheHitCount;
+    cacheMissCount += summary.cacheMissCount;
+    searchTimeMs += summary.searchTimeMs;
+    reachabilityTimeMs += summary.reachabilityTimeMs;
+    searchSummaryCount += summary.searchSummaryCount;
+    searchSpawnChildCount += summary.searchSpawnChildCount;
+    duplicatePrunedCount += summary.duplicatePrunedCount;
+    noLegalMovePrunedCount += summary.noLegalMovePrunedCount;
+    nodeCapHitCount += summary.nodeCapHitCount;
+    if (summary.maxFrontierSize > maxFrontierSizePeak) {
+      maxFrontierSizePeak = summary.maxFrontierSize;
+    }
+    generatedNodes += summary.generatedNodes;
+    enqueuedNodes += summary.enqueuedNodes;
+    enqueueDuplicateSkipped += summary.enqueueDuplicateSkipped;
+    enqueueDominatedSkipped += summary.enqueueDominatedSkipped;
+    popDuplicateSkipped += summary.popDuplicateSkipped;
+    if (summary.frontierPeakSize > frontierPeakSize) {
+      frontierPeakSize = summary.frontierPeakSize;
+    }
+    expandedByDepth = mergeDepthHistograms(expandedByDepth, summary.expandedByDepth);
+    enqueuedByDepth = mergeDepthHistograms(enqueuedByDepth, summary.enqueuedByDepth);
+    runtimeBreakdown = mergeRuntimeBreakdowns(runtimeBreakdown, summary.runtimeBreakdown);
+    if (remainingExpandedNodeCap != null) {
+      remainingExpandedNodeCap = Math.max(0, remainingExpandedNodeCap - summary.expandedNodes);
+      if (remainingExpandedNodeCap <= 0) break;
+    }
+    if (decisionDeadlineMs != null && performance.now() >= decisionDeadlineMs) break;
+  }
+
+  return {
+    summaries,
+    expandedNodes,
+    cacheHitCount,
+    cacheMissCount,
+    searchTimeMs,
+    reachabilityTimeMs,
+    searchSummaryCount,
+    searchSpawnChildCount,
+    duplicatePrunedCount,
+    noLegalMovePrunedCount,
+    nodeCapHitCount,
+    maxFrontierSizePeak,
+    rootEvaluationCount: summaries.length,
+    generatedNodes,
+    enqueuedNodes,
+    enqueueDuplicateSkipped,
+    enqueueDominatedSkipped,
+    popDuplicateSkipped,
+    frontierPeakSize,
+    expandedByDepth,
+    enqueuedByDepth,
+    runtimeBreakdown,
+  };
+}
+
+function mergeSearchPassSummaries(
+  left: SearchPassSummary,
+  right: SearchPassSummary
+): SearchPassSummary {
+  return {
+    summaries: [...left.summaries, ...right.summaries],
+    expandedNodes: left.expandedNodes + right.expandedNodes,
+    cacheHitCount: left.cacheHitCount + right.cacheHitCount,
+    cacheMissCount: left.cacheMissCount + right.cacheMissCount,
+    searchTimeMs: left.searchTimeMs + right.searchTimeMs,
+    reachabilityTimeMs: left.reachabilityTimeMs + right.reachabilityTimeMs,
+    searchSummaryCount: left.searchSummaryCount + right.searchSummaryCount,
+    searchSpawnChildCount: left.searchSpawnChildCount + right.searchSpawnChildCount,
+    duplicatePrunedCount: left.duplicatePrunedCount + right.duplicatePrunedCount,
+    noLegalMovePrunedCount: left.noLegalMovePrunedCount + right.noLegalMovePrunedCount,
+    nodeCapHitCount: left.nodeCapHitCount + right.nodeCapHitCount,
+    maxFrontierSizePeak: Math.max(left.maxFrontierSizePeak, right.maxFrontierSizePeak),
+    rootEvaluationCount: left.rootEvaluationCount + right.rootEvaluationCount,
+    generatedNodes: left.generatedNodes + right.generatedNodes,
+    enqueuedNodes: left.enqueuedNodes + right.enqueuedNodes,
+    enqueueDuplicateSkipped:
+      left.enqueueDuplicateSkipped + right.enqueueDuplicateSkipped,
+    enqueueDominatedSkipped:
+      left.enqueueDominatedSkipped + right.enqueueDominatedSkipped,
+    popDuplicateSkipped: left.popDuplicateSkipped + right.popDuplicateSkipped,
+    frontierPeakSize: Math.max(left.frontierPeakSize, right.frontierPeakSize),
+    expandedByDepth: mergeDepthHistograms(left.expandedByDepth, right.expandedByDepth),
+    enqueuedByDepth: mergeDepthHistograms(left.enqueuedByDepth, right.enqueuedByDepth),
+    runtimeBreakdown: mergeRuntimeBreakdowns(left.runtimeBreakdown, right.runtimeBreakdown),
+  };
+}
+
+function formatDepthHistogram(histogram: DepthHistogram): string {
+  const parts = Object.entries(histogram)
+    .map(([depth, count]) => [Number(depth), count] as const)
+    .sort((left, right) => left[0] - right[0])
+    .map(([depth, count]) => `${depth}:${count}`);
+  return parts.length > 0 ? parts.join(" ") : "(none)";
+}
+
+function summarizePerRootMove<T>(
+  summaries: readonly MoveSearchSummary[],
+  stage: SearchStage,
+  pick: (summary: MoveSearchSummary) => T
+): Partial<Record<Direction, T>> {
+  const byMove = new Map<Direction, MoveSearchSummary>();
+  for (const summary of summaries) {
+    const previous = byMove.get(summary.transition.direction);
+    if (
+      previous == null ||
+      comparePost7MoveSearchSummaries(summary, previous, stage) < 0
+    ) {
+      byMove.set(summary.transition.direction, summary);
+    }
+  }
+
+  const out: Partial<Record<Direction, T>> = {};
+  for (const [move, summary] of byMove.entries()) {
+    out[move] = pick(summary);
+  }
+  return out;
+}
+
+function formatSearchRuntimeBreakdown(breakdown: SearchRuntimeBreakdown): string {
+  return [
+    `canonicalTimeMs=${breakdown.canonicalTimeMs.toFixed(2)}`,
+    `heapTimeMs=${breakdown.heapTimeMs.toFixed(2)}`,
+    `expandTimeMs=${breakdown.expandTimeMs.toFixed(2)}`,
+    `evalSignalsTimeMs=${breakdown.evalSignalsTimeMs.toFixed(2)}`,
+    `viableCountTimeMs=${breakdown.viableCountTimeMs.toFixed(2)}`,
+    `scoreComputeTimeMs=${breakdown.scoreComputeTimeMs.toFixed(2)}`,
+    `transpositionCheckTimeMs=${breakdown.transpositionCheckTimeMs.toFixed(2)}`,
+    `frontierDedupeTimeMs=${breakdown.frontierDedupeTimeMs.toFixed(2)}`,
+  ].join(" ");
+}
+
+function logRootComparisonTable(
+  stage: SearchStage,
+  summaries: readonly MoveSearchSummary[],
+  chosenMove: Direction
+): void {
+  console.log(`stage=${stage} root-comparison`);
+  console.log(
+    "move cap77 cap66 missedHigh reachableRatio searchScore bestDepth maxDepth noMergeShare worstImmediate worstNearTerm expanded enqueued topDepth topScore searchTimeMs chosen"
+  );
+
+  const byMove = new Map<Direction, MoveSearchSummary>();
+  for (const summary of summaries) {
+    const previous = byMove.get(summary.transition.direction);
+    if (
+      previous == null ||
+      comparePost7MoveSearchSummaries(summary, previous, stage) < 0
+    ) {
+      byMove.set(summary.transition.direction, summary);
+    }
+  }
+
+  const ordered = [...byMove.values()].sort((left, right) =>
+    comparePost7MoveSearchSummaries(left, right, stage)
+  );
+
+  for (const summary of ordered) {
+    console.log(
+      [
+        summary.transition.direction,
+        summary.transition.capturedImmediate77 ? "1" : "0",
+        summary.transition.capturedImmediate66 ? "1" : "0",
+        summary.transition.missedImmediateHighMerge ? "1" : "0",
+        summary.reachableRatio == null ? "na" : summary.reachableRatio.toFixed(4),
+        summary.searchScore.toFixed(2),
+        String(summary.bestDepthReached),
+        String(summary.maxDepthReached),
+        summary.transition.noMergeShare.toFixed(4),
+        String(summary.transition.worstHighestImmediateMergeLevel),
+        String(summary.transition.worstHighestNearTermMergeLevel),
+        String(summary.expandedNodes),
+        String(summary.enqueuedNodes),
+        String(summary.topCandidateDepth),
+        summary.topCandidateScore.toFixed(2),
+        summary.searchTimeMs.toFixed(2),
+        summary.transition.direction === chosenMove ? "yes" : "no",
+      ].join(" ")
+    );
+  }
 }
 
 function recordChosenMergeSummary(
@@ -1648,31 +2890,139 @@ function recordChosenMergeSummary(
     minimalPolicyExperimentCounterState.post7SearchChosenSearchScoreSum +=
       chosenSearch.searchScore;
     minimalPolicyExperimentCounterState.post7SearchChosenReachableRatioSum +=
-      chosenSearch.reachableRatio;
-    minimalPolicyExperimentCounterState.post7SearchBestDepthReachedSum +=
-      chosenSearch.bestDepthReached;
-    minimalPolicyExperimentCounterState.post7SearchChosenMeanWorstBestImmediateMergeLevelSum +=
-      chosenSearch.worstBestImmediateMergeLevelSeen;
-    minimalPolicyExperimentCounterState.post7SearchChosenMeanWorstBestNearTermMergeLevelSum +=
-      chosenSearch.worstBestNearTermMergeLevelSeen;
+      chosenSearch.reachableRatio ?? 0;
+    minimalPolicyExperimentCounterState.post7SearchChosenMeanWorstReachableImmediateMergeLevelSum +=
+      chosenSearch.worstReachableImmediateMergeLevel;
+    minimalPolicyExperimentCounterState.post7SearchChosenMeanWorstReachableNearTermMergeLevelSum +=
+      chosenSearch.worstReachableNearTermMergeLevel;
     minimalPolicyExperimentCounterState.post7SearchChosenFinalNoMergeShareSum +=
       chosenSearch.finalNoMergeShare;
   }
 }
 
-function recordStageDecisionTime(stage: SearchStage, elapsedMs: number): void {
+function recordStageDecisionMetrics(stage: SearchStage, metrics: StageDecisionMetrics): void {
   if (stage === "post7") {
     minimalPolicyExperimentCounterState.post7SearchDecisionCount++;
-    minimalPolicyExperimentCounterState.post7SearchTotalTimeMs += elapsedMs;
+    minimalPolicyExperimentCounterState.post7SearchTotalTimeMs += metrics.elapsedMs;
+    minimalPolicyExperimentCounterState.post7SearchTotalSearchTimeMs += metrics.searchTimeMs;
+    minimalPolicyExperimentCounterState.post7SearchTotalReachabilityTimeMs +=
+      metrics.reachabilityTimeMs;
+    minimalPolicyExperimentCounterState.post7SearchSummaryCount += metrics.searchSummaryCount;
+    minimalPolicyExperimentCounterState.post7SearchSpawnChildCount += metrics.searchSpawnChildCount;
+    minimalPolicyExperimentCounterState.post7SearchRootEvaluationCount += metrics.rootEvaluationCount;
+    minimalPolicyExperimentCounterState.post7SearchExpandedNodeCount += metrics.expandedNodes;
+    minimalPolicyExperimentCounterState.post7SearchGeneratedNodeCount += metrics.generatedNodes;
+    minimalPolicyExperimentCounterState.post7SearchEnqueuedNodeCount += metrics.enqueuedNodes;
+    minimalPolicyExperimentCounterState.post7SearchEnqueueDuplicateSkippedCount +=
+      metrics.enqueueDuplicateSkipped;
+    minimalPolicyExperimentCounterState.post7SearchEnqueueDominatedSkippedCount +=
+      metrics.enqueueDominatedSkipped;
+    minimalPolicyExperimentCounterState.post7SearchPopDuplicateSkippedCount +=
+      metrics.popDuplicateSkipped;
+    minimalPolicyExperimentCounterState.post7SearchFrontierPeakSizePeak = Math.max(
+      minimalPolicyExperimentCounterState.post7SearchFrontierPeakSizePeak,
+      metrics.frontierPeakSize
+    );
+    minimalPolicyExperimentCounterState.post7SearchBestDepthReachedSum +=
+      metrics.chosenBestDepthReached;
+    minimalPolicyExperimentCounterState.post7SearchBestDepthReachedPeak = Math.max(
+      minimalPolicyExperimentCounterState.post7SearchBestDepthReachedPeak,
+      metrics.chosenBestDepthReached
+    );
+    minimalPolicyExperimentCounterState.post7SearchCacheHitCount += metrics.cacheHitCount;
+    minimalPolicyExperimentCounterState.post7SearchCacheMissCount += metrics.cacheMissCount;
+    minimalPolicyExperimentCounterState.post7SearchDuplicatePrunedCount +=
+      metrics.duplicatePrunedCount;
+    minimalPolicyExperimentCounterState.post7SearchNoLegalMovePrunedCount +=
+      metrics.noLegalMovePrunedCount;
+    minimalPolicyExperimentCounterState.post7SearchNodeCapHitCount += metrics.nodeCapHitCount;
+    minimalPolicyExperimentCounterState.post7SearchMaxFrontierSizePeak = Math.max(
+      minimalPolicyExperimentCounterState.post7SearchMaxFrontierSizePeak,
+      metrics.maxFrontierSizePeak
+    );
     return;
   }
   if (stage === "critical") {
     minimalPolicyExperimentCounterState.criticalSearchDecisionCount++;
-    minimalPolicyExperimentCounterState.criticalSearchTotalTimeMs += elapsedMs;
+    minimalPolicyExperimentCounterState.criticalSearchTotalTimeMs += metrics.elapsedMs;
+    minimalPolicyExperimentCounterState.criticalSearchTotalSearchTimeMs += metrics.searchTimeMs;
+    minimalPolicyExperimentCounterState.criticalSearchTotalReachabilityTimeMs +=
+      metrics.reachabilityTimeMs;
+    minimalPolicyExperimentCounterState.criticalSearchSummaryCount += metrics.searchSummaryCount;
+    minimalPolicyExperimentCounterState.criticalSearchSpawnChildCount +=
+      metrics.searchSpawnChildCount;
+    minimalPolicyExperimentCounterState.criticalSearchRootEvaluationCount +=
+      metrics.rootEvaluationCount;
+    minimalPolicyExperimentCounterState.criticalSearchExpandedNodeCount += metrics.expandedNodes;
+    minimalPolicyExperimentCounterState.criticalSearchGeneratedNodeCount += metrics.generatedNodes;
+    minimalPolicyExperimentCounterState.criticalSearchEnqueuedNodeCount += metrics.enqueuedNodes;
+    minimalPolicyExperimentCounterState.criticalSearchEnqueueDuplicateSkippedCount +=
+      metrics.enqueueDuplicateSkipped;
+    minimalPolicyExperimentCounterState.criticalSearchEnqueueDominatedSkippedCount +=
+      metrics.enqueueDominatedSkipped;
+    minimalPolicyExperimentCounterState.criticalSearchPopDuplicateSkippedCount +=
+      metrics.popDuplicateSkipped;
+    minimalPolicyExperimentCounterState.criticalSearchFrontierPeakSizePeak = Math.max(
+      minimalPolicyExperimentCounterState.criticalSearchFrontierPeakSizePeak,
+      metrics.frontierPeakSize
+    );
+    minimalPolicyExperimentCounterState.criticalSearchBestDepthReachedSum +=
+      metrics.chosenBestDepthReached;
+    minimalPolicyExperimentCounterState.criticalSearchBestDepthReachedPeak = Math.max(
+      minimalPolicyExperimentCounterState.criticalSearchBestDepthReachedPeak,
+      metrics.chosenBestDepthReached
+    );
+    minimalPolicyExperimentCounterState.criticalSearchCacheHitCount += metrics.cacheHitCount;
+    minimalPolicyExperimentCounterState.criticalSearchCacheMissCount += metrics.cacheMissCount;
+    minimalPolicyExperimentCounterState.criticalSearchDuplicatePrunedCount +=
+      metrics.duplicatePrunedCount;
+    minimalPolicyExperimentCounterState.criticalSearchNoLegalMovePrunedCount +=
+      metrics.noLegalMovePrunedCount;
+    minimalPolicyExperimentCounterState.criticalSearchNodeCapHitCount += metrics.nodeCapHitCount;
+    minimalPolicyExperimentCounterState.criticalSearchMaxFrontierSizePeak = Math.max(
+      minimalPolicyExperimentCounterState.criticalSearchMaxFrontierSizePeak,
+      metrics.maxFrontierSizePeak
+    );
     return;
   }
   minimalPolicyExperimentCounterState.earlySearchDecisionCount++;
-  minimalPolicyExperimentCounterState.earlySearchTotalTimeMs += elapsedMs;
+  minimalPolicyExperimentCounterState.earlySearchTotalTimeMs += metrics.elapsedMs;
+  minimalPolicyExperimentCounterState.earlySearchTotalSearchTimeMs += metrics.searchTimeMs;
+  minimalPolicyExperimentCounterState.earlySearchTotalReachabilityTimeMs +=
+    metrics.reachabilityTimeMs;
+  minimalPolicyExperimentCounterState.earlySearchSummaryCount += metrics.searchSummaryCount;
+  minimalPolicyExperimentCounterState.earlySearchSpawnChildCount += metrics.searchSpawnChildCount;
+  minimalPolicyExperimentCounterState.earlySearchRootEvaluationCount += metrics.rootEvaluationCount;
+  minimalPolicyExperimentCounterState.earlySearchExpandedNodeCount += metrics.expandedNodes;
+  minimalPolicyExperimentCounterState.earlySearchGeneratedNodeCount += metrics.generatedNodes;
+  minimalPolicyExperimentCounterState.earlySearchEnqueuedNodeCount += metrics.enqueuedNodes;
+  minimalPolicyExperimentCounterState.earlySearchEnqueueDuplicateSkippedCount +=
+    metrics.enqueueDuplicateSkipped;
+  minimalPolicyExperimentCounterState.earlySearchEnqueueDominatedSkippedCount +=
+    metrics.enqueueDominatedSkipped;
+  minimalPolicyExperimentCounterState.earlySearchPopDuplicateSkippedCount +=
+    metrics.popDuplicateSkipped;
+  minimalPolicyExperimentCounterState.earlySearchFrontierPeakSizePeak = Math.max(
+    minimalPolicyExperimentCounterState.earlySearchFrontierPeakSizePeak,
+    metrics.frontierPeakSize
+  );
+  minimalPolicyExperimentCounterState.earlySearchBestDepthReachedSum +=
+    metrics.chosenBestDepthReached;
+  minimalPolicyExperimentCounterState.earlySearchBestDepthReachedPeak = Math.max(
+    minimalPolicyExperimentCounterState.earlySearchBestDepthReachedPeak,
+    metrics.chosenBestDepthReached
+  );
+  minimalPolicyExperimentCounterState.earlySearchCacheHitCount += metrics.cacheHitCount;
+  minimalPolicyExperimentCounterState.earlySearchCacheMissCount += metrics.cacheMissCount;
+  minimalPolicyExperimentCounterState.earlySearchDuplicatePrunedCount +=
+    metrics.duplicatePrunedCount;
+  minimalPolicyExperimentCounterState.earlySearchNoLegalMovePrunedCount +=
+    metrics.noLegalMovePrunedCount;
+  minimalPolicyExperimentCounterState.earlySearchNodeCapHitCount += metrics.nodeCapHitCount;
+  minimalPolicyExperimentCounterState.earlySearchMaxFrontierSizePeak = Math.max(
+    minimalPolicyExperimentCounterState.earlySearchMaxFrontierSizePeak,
+    metrics.maxFrontierSizePeak
+  );
 }
 
 function chooseMinimalPolicyDirectionWithEarlyPost7Lift(
@@ -1695,72 +3045,220 @@ function chooseMinimalPolicyDirectionWithEarlyPost7Lift(
   }
 
   if (transitionSummaries.length === 0) {
-    recordStageDecisionTime(stage, performance.now() - startMs);
+    recordStageDecisionMetrics(stage, {
+      elapsedMs: performance.now() - startMs,
+      searchTimeMs: 0,
+      reachabilityTimeMs: 0,
+      searchSummaryCount: 0,
+      searchSpawnChildCount: 0,
+      expandedNodes: 0,
+      cacheHitCount: 0,
+      cacheMissCount: 0,
+      duplicatePrunedCount: 0,
+      noLegalMovePrunedCount: 0,
+      nodeCapHitCount: 0,
+      maxFrontierSizePeak: 0,
+      rootEvaluationCount: 0,
+      generatedNodes: 0,
+      enqueuedNodes: 0,
+      enqueueDuplicateSkipped: 0,
+      enqueueDominatedSkipped: 0,
+      popDuplicateSkipped: 0,
+      frontierPeakSize: 0,
+      chosenBestDepthReached: 0,
+    });
     return baselineDirection;
   }
 
-  const candidates = transitionSummaries;
+  const candidates =
+    stage === "early" ? [...transitionSummaries] : filterPost7SearchCandidates(transitionSummaries);
   candidates.sort(compareMoveMergeOpportunitySummaries);
   let chosenTransition = candidates[0]!;
   let chosenSearch: MoveSearchSummary | null = null;
 
   if (candidates.length > 1) {
-    const deadline = startMs + getStageTimeBudgetMs(stage);
     const config = getStageSearchConfig(stage);
-    const searchSummaries: MoveSearchSummary[] = [];
-    let decisionExpandedNodes = 0;
-    let decisionCacheHits = 0;
-    let decisionCacheMisses = 0;
+    const decisionDeadlineMs =
+      config.decisionExpandedNodeCap == null ? startMs + getStageTimeBudgetMs(stage) : null;
+    let evaluatedPass: SearchPassSummary;
+    let screenedCandidateCount = 0;
+    let refinedCandidateCount = 0;
 
-    for (let i = 0; i < candidates.length; i++) {
-      const remainingBudgetMs = Math.max(1, deadline - performance.now());
-      const candidatesLeft = candidates.length - i;
-      const candidateBudgetMs = Math.max(1, remainingBudgetMs / Math.max(1, candidatesLeft));
-      const summary = evaluatePost7MoveSearchSummary(
-        board,
-        candidates[i]!,
-        config,
-        stage,
-        candidateBudgetMs
+    if (config.decisionExpandedNodeCap != null && config.rootRefineTopK > 0) {
+      const screeningBudgetCap = Math.max(
+        candidates.length,
+        Math.floor(config.decisionExpandedNodeCap * config.rootScreeningBudgetFraction)
       );
-      searchSummaries.push(summary);
-      decisionExpandedNodes += summary.expandedNodes;
-      decisionCacheHits += summary.cacheHitCount;
-      decisionCacheMisses += summary.cacheMissCount;
-      if (performance.now() >= deadline) break;
+      resetSearchTranspositionTable();
+      const screeningPass = evaluateSearchPass(
+        board,
+        candidates,
+        { ...config, expandedNodeCap: screeningBudgetCap },
+        stage,
+        null,
+        false
+      );
+      screenedCandidateCount = screeningPass.summaries.length;
+      const shortlisted = [...screeningPass.summaries].sort(compareOracleScreeningMoveSearchSummaries);
+      const shortlistCount = Math.max(1, Math.min(config.rootRefineTopK, shortlisted.length));
+      const shortlistTransitions = shortlisted
+        .slice(0, shortlistCount)
+        .map((summary) => summary.transition);
+      refinedCandidateCount = shortlistTransitions.length;
+      const remainingDecisionExpandedNodeCap = Math.max(
+        1,
+        config.decisionExpandedNodeCap - screeningPass.expandedNodes
+      );
+      resetSearchTranspositionTable();
+      const refinePass = evaluateSearchPass(
+        board,
+        shortlistTransitions,
+        { ...config, expandedNodeCap: remainingDecisionExpandedNodeCap },
+        stage,
+        null,
+        true
+      );
+      evaluatedPass = mergeSearchPassSummaries(screeningPass, refinePass);
+      if (refinePass.summaries.length > 0) {
+        refinePass.summaries.sort((left, right) => comparePost7MoveSearchSummaries(left, right, stage));
+        chosenSearch = refinePass.summaries[0]!;
+      } else if (shortlisted.length > 0) {
+        chosenSearch = shortlisted[0]!;
+      }
+    } else {
+      resetSearchTranspositionTable();
+      const searchPass = evaluateSearchPass(board, candidates, config, stage, decisionDeadlineMs, true);
+      evaluatedPass = searchPass;
+      screenedCandidateCount = searchPass.summaries.length;
+      refinedCandidateCount = searchPass.summaries.length;
+      if (searchPass.summaries.length > 0) {
+        searchPass.summaries.sort((left, right) => comparePost7MoveSearchSummaries(left, right, stage));
+        chosenSearch = searchPass.summaries[0]!;
+      }
     }
 
-    if (searchSummaries.length > 0) {
-      searchSummaries.sort(comparePost7MoveSearchSummaries);
-      chosenSearch = searchSummaries[0]!;
+    if (chosenSearch != null) {
       chosenTransition = chosenSearch.transition;
     }
 
+    const elapsedMs = performance.now() - startMs;
     if (stage === "post7") {
-      minimalPolicyExperimentCounterState.post7SearchExpandedNodeCount += decisionExpandedNodes;
-      minimalPolicyExperimentCounterState.post7SearchCacheHitCount += decisionCacheHits;
-      minimalPolicyExperimentCounterState.post7SearchCacheMissCount += decisionCacheMisses;
+      recordChosenMergeSummary(chosenTransition, chosenSearch);
     }
+    if (SEARCH_LOGGING_ENABLED && chosenSearch != null) {
+      const cacheTotal = evaluatedPass.cacheHitCount + evaluatedPass.cacheMissCount;
+      const cacheHitRate = cacheTotal > 0 ? evaluatedPass.cacheHitCount / cacheTotal : 0;
+      const globalMaxDepthReached = evaluatedPass.summaries.reduce(
+        (best, summary) => Math.max(best, summary.maxDepthReached),
+        0
+      );
+      const chosenRootBestDepthReached = chosenSearch.bestDepthReached;
+      const perRootMaxDepthReached = summarizePerRootMove(
+        evaluatedPass.summaries,
+        stage,
+        (summary) => summary.maxDepthReached
+      );
+      const perRootExpandedNodes = summarizePerRootMove(
+        evaluatedPass.summaries,
+        stage,
+        (summary) => summary.expandedNodes
+      );
+      const perRootEnqueuedNodes = summarizePerRootMove(
+        evaluatedPass.summaries,
+        stage,
+        (summary) => summary.enqueuedNodes
+      );
+      console.log(
+        [
+          `stage=${stage}`,
+          `move=${chosenTransition.direction}`,
+          `candidates=${candidates.length}`,
+          `screened=${screenedCandidateCount}`,
+          `refined=${refinedCandidateCount}`,
+          `targetLevel=${chosenSearch.targetLevel}`,
+          `decisionTimeMs=${elapsedMs.toFixed(2)}`,
+          `searchTimeMs=${evaluatedPass.searchTimeMs.toFixed(2)}`,
+          `reachabilityTimeMs=${evaluatedPass.reachabilityTimeMs.toFixed(2)}`,
+          `expandedNodes=${evaluatedPass.expandedNodes}`,
+          `generatedNodes=${evaluatedPass.generatedNodes}`,
+          `enqueuedNodes=${evaluatedPass.enqueuedNodes}`,
+          `enqueueDuplicateSkipped=${evaluatedPass.enqueueDuplicateSkipped}`,
+          `enqueueDominatedSkipped=${evaluatedPass.enqueueDominatedSkipped}`,
+          `popDuplicateSkipped=${evaluatedPass.popDuplicateSkipped}`,
+          `cacheHitRate=${cacheHitRate.toFixed(4)}`,
+          `globalMaxDepthReached=${globalMaxDepthReached}`,
+          `chosenRootBestDepthReached=${chosenRootBestDepthReached}`,
+          `reachableRatio=${chosenSearch.reachableRatio == null ? "na" : chosenSearch.reachableRatio.toFixed(4)}`,
+          `spawnChildren=${chosenSearch.searchSpawnChildCount}`,
+          `duplicatePruned=${chosenSearch.duplicatePrunedCount}`,
+          `noLegalPruned=${chosenSearch.noLegalMovePrunedCount}`,
+          `nodeCapHitCount=${chosenSearch.nodeCapHitCount}`,
+          `maxFrontierSize=${chosenSearch.maxFrontierSize}`,
+          `frontierPeakSize=${chosenSearch.frontierPeakSize}`,
+          `depthUsed=${chosenSearch.config.horizon}`,
+          `expandedNodeCap=${chosenSearch.config.expandedNodeCap ?? "time"}`,
+          `bestDepthReached=${chosenSearch.bestDepthReached}`,
+        ].join(" ")
+      );
+      console.log(`stage=${stage} expandedByDepth ${formatDepthHistogram(evaluatedPass.expandedByDepth)}`);
+      console.log(`stage=${stage} enqueuedByDepth ${formatDepthHistogram(evaluatedPass.enqueuedByDepth)}`);
+      console.log(`stage=${stage} runtime ${formatSearchRuntimeBreakdown(evaluatedPass.runtimeBreakdown)}`);
+      console.log(`stage=${stage} perRootMaxDepthReached ${JSON.stringify(perRootMaxDepthReached)}`);
+      console.log(`stage=${stage} perRootExpandedNodes ${JSON.stringify(perRootExpandedNodes)}`);
+      console.log(`stage=${stage} perRootEnqueuedNodes ${JSON.stringify(perRootEnqueuedNodes)}`);
+      logRootComparisonTable(stage, evaluatedPass.summaries, chosenTransition.direction);
+    }
+    recordStageDecisionMetrics(stage, {
+      elapsedMs,
+      searchTimeMs: evaluatedPass.searchTimeMs,
+      reachabilityTimeMs: evaluatedPass.reachabilityTimeMs,
+      searchSummaryCount: evaluatedPass.searchSummaryCount,
+      searchSpawnChildCount: evaluatedPass.searchSpawnChildCount,
+      expandedNodes: evaluatedPass.expandedNodes,
+      cacheHitCount: evaluatedPass.cacheHitCount,
+      cacheMissCount: evaluatedPass.cacheMissCount,
+      duplicatePrunedCount: evaluatedPass.duplicatePrunedCount,
+      noLegalMovePrunedCount: evaluatedPass.noLegalMovePrunedCount,
+      nodeCapHitCount: evaluatedPass.nodeCapHitCount,
+      maxFrontierSizePeak: evaluatedPass.maxFrontierSizePeak,
+      rootEvaluationCount: evaluatedPass.rootEvaluationCount,
+      generatedNodes: evaluatedPass.generatedNodes,
+      enqueuedNodes: evaluatedPass.enqueuedNodes,
+      enqueueDuplicateSkipped: evaluatedPass.enqueueDuplicateSkipped,
+      enqueueDominatedSkipped: evaluatedPass.enqueueDominatedSkipped,
+      popDuplicateSkipped: evaluatedPass.popDuplicateSkipped,
+      frontierPeakSize: evaluatedPass.frontierPeakSize,
+      chosenBestDepthReached: chosenSearch?.bestDepthReached ?? 0,
+    });
+    return chosenTransition.direction;
   }
 
   const elapsedMs = performance.now() - startMs;
   if (stage === "post7") {
     recordChosenMergeSummary(chosenTransition, chosenSearch);
   }
-  if (SEARCH_LOGGING_ENABLED && chosenSearch != null) {
-    console.log(
-      [
-        `stage=${stage}`,
-        `move=${chosenTransition.direction}`,
-        `searchTimeMs=${elapsedMs.toFixed(2)}`,
-        `expandedNodes=${chosenSearch.expandedNodes}`,
-        `cacheHitRate=${chosenSearch.cacheHitRate.toFixed(4)}`,
-        `reachableRatio=${chosenSearch.reachableRatio.toFixed(4)}`,
-        `bestDepthReached=${chosenSearch.bestDepthReached}`,
-      ].join(" ")
-    );
-  }
-  recordStageDecisionTime(stage, elapsedMs);
+  recordStageDecisionMetrics(stage, {
+    elapsedMs,
+    searchTimeMs: 0,
+    reachabilityTimeMs: 0,
+    searchSummaryCount: 0,
+    searchSpawnChildCount: 0,
+    expandedNodes: 0,
+    cacheHitCount: 0,
+    cacheMissCount: 0,
+    duplicatePrunedCount: 0,
+    noLegalMovePrunedCount: 0,
+    nodeCapHitCount: 0,
+    maxFrontierSizePeak: 0,
+    rootEvaluationCount: 0,
+    generatedNodes: 0,
+    enqueuedNodes: 0,
+    enqueueDuplicateSkipped: 0,
+    enqueueDominatedSkipped: 0,
+    popDuplicateSkipped: 0,
+    frontierPeakSize: 0,
+    chosenBestDepthReached: 0,
+  });
   return chosenTransition.direction;
 }
 
