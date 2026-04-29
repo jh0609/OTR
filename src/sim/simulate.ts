@@ -249,6 +249,7 @@ export function simulateOne(
   let board = initialBoard(rng);
   observeBoard(board, s);
   let steps = 0;
+  let won = false;
   const tailDrafts: TailDraft[] = [];
   let prevTurnStartBoard: Board | null = null;
 
@@ -259,10 +260,10 @@ export function simulateOne(
   while (steps < MAX_STEPS) {
     const actions = legalActions(board);
     if (actions.length === 0) {
-      return finalize(false, steps, "no_legal_moves", s, board, tailDrafts);
+      return finalize(won, steps, "no_legal_moves", s, board, tailDrafts);
     }
     if (mode === "strict" && extraRule !== undefined && !extraRule(board)) {
-      return finalize(false, steps, "strict_rule_failed", s, board, tailDrafts);
+      return finalize(won, steps, "strict_rule_failed", s, board, tailDrafts);
     }
 
     const boardBeforeSlide = board;
@@ -283,9 +284,9 @@ export function simulateOne(
     observeBoard(next, s);
     steps++;
 
-    if (win) return finalize(true, steps, "win", s, next, tailDrafts);
+    if (win) won = true;
     if (!moved) {
-      return finalize(false, steps, "policy_illegal_move", s, next, tailDrafts);
+      return finalize(won, steps, "policy_illegal_move", s, next, tailDrafts);
     }
 
     board = spawnRandom(next, rng);
@@ -294,11 +295,11 @@ export function simulateOne(
     observeBoard(board, s);
 
     if (mode === "strict" && extraRule !== undefined && !extraRule(board)) {
-      return finalize(false, steps, "strict_rule_failed", s, board, tailDrafts);
+      return finalize(won, steps, "strict_rule_failed", s, board, tailDrafts);
     }
   }
 
-  return finalize(false, MAX_STEPS, "max_steps", s, board, tailDrafts);
+  return finalize(won, MAX_STEPS, "max_steps", s, board, tailDrafts);
 }
 
 export type MonteCarloProgressEvent = {

@@ -24,12 +24,23 @@ describe("slide merge (2048-style)", () => {
     expect([...next]).toEqual([3, 2, 0, 0, 0, 0, 0, 0, 0]);
   });
 
-  it("detects win when 8+8 → 9", () => {
+  it("detects fusion when 8+8 removes both 8s", () => {
     const b = boardFrom([8, 8, 0, 0, 0, 0, 0, 0, 0]);
     const r = slide(b, "LEFT");
     expect(r.win).toBe(true);
-    expect(r.next[0]).toBe(9);
-    expect(maxTileLevel(r.next)).toBe(9);
+    expect([...r.next]).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(maxTileLevel(r.next)).toBe(0);
+    expect(r.next).not.toContain(9);
+  });
+
+  it("allows a normal level-1 spawn after fusion", () => {
+    const b = boardFrom([8, 8, 0, 0, 0, 0, 0, 0, 0]);
+    const r = slide(b, "LEFT");
+    const spawned = spawnAll(r.next);
+    expect(r.win).toBe(true);
+    expect(spawned).toHaveLength(9);
+    expect(spawned[0]).toContain(1);
+    expect(spawned[0]).not.toContain(9);
   });
 
   it("[1,1,1] row LEFT → [2,1,0]", () => {
@@ -108,7 +119,7 @@ describe("spawnAll", () => {
 
 describe("no legal moves", () => {
   it("returns empty legal actions when no slide changes the board", () => {
-    const b = boardFrom([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const b = boardFrom([1, 2, 3, 4, 5, 6, 7, 8, 1]);
     expect(legalActions(b)).toEqual([]);
   });
 });
@@ -161,10 +172,10 @@ describe("runMonteCarlo", () => {
     for (const k of TERMINAL_REASONS) sumReasons += mc.terminalReasons[k];
     expect(sumReasons).toBe(20);
     let sumDist = 0;
-    for (let L = 0; L <= 9; L++) sumDist += mc.maxLevelDistribution[L] ?? 0;
+    for (let L = 0; L <= 8; L++) sumDist += mc.maxLevelDistribution[L] ?? 0;
     expect(sumDist).toBe(20);
     let sumFinal = 0;
-    for (let L = 0; L <= 9; L++) sumFinal += mc.finalMaxLevelDistribution[L] ?? 0;
+    for (let L = 0; L <= 8; L++) sumFinal += mc.finalMaxLevelDistribution[L] ?? 0;
     expect(sumFinal).toBe(20);
     let sfs = 0;
     for (let k = 0; k <= 8; k++) sfs += mc.finalSecondMaxDistribution[k] ?? 0;

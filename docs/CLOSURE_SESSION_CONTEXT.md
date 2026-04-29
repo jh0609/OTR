@@ -1,6 +1,6 @@
 # Closure Session Context
 
-Last updated: 2026-04-23
+Last updated: 2026-04-24
 
 ## Purpose
 
@@ -87,6 +87,10 @@ There are now two distinct layers to keep straight:
 1. closure / rebuild logic
 2. baseline staged search used by `createEarlyPost7LiftMinimalPolicy()`
 
+As of 2026-04-24 there is also a separate practical line that should not be confused with the closure experiments:
+
+3. reference expectimax port used for the in-game hint button
+
 Current baseline search shape in `src/sim/minimalSurvival.ts`:
 
 - always-on staged search
@@ -122,6 +126,156 @@ Relevant files:
 - `tools/closure-ab.ts`
 - `tools/policy-play.ts`
 - `tools/debug-divergence.ts`
+
+Separate practical-hint files added in the 2026-04-24 session:
+
+- `src/sim/expectimax.ts`
+- `src/sim/expectimax.test.ts`
+- `src/game/scenes/GameScene.ts`
+- `tools/benchmark-reference-expectimax.ts`
+- `tools/benchmark-reference-expectimax-latency.ts`
+
+## Parallel Practical Track: Reference Expectimax
+
+This session added a separate expectimax line whose purpose is practical move selection / hint quality, not closure-policy diagnosis.
+
+Important separation:
+
+- closure / oracle work is still the main research track for late-game `(8, 8)` construction
+- reference expectimax is a direct 3x3 port of the classic C++ 2048-ai decision structure
+- it currently affects the in-game hint button only
+- it does not replace `minimalPolicy`, `hybridPolicy`, closure gating, or the closure experiment harness
+
+### Reference Expectimax Implementation Status
+
+Implemented in `src/sim/expectimax.ts`.
+
+Preserved from the C++ reference:
+
+- top-level move scoring structure
+- `score_move_node` / `score_tilechoose_node` recursion shape
+- `cprob` pruning
+- transposition table reuse rule
+- heuristic formula using empty count, merges, monotonicity, and sum
+
+Required 3x3 adaptations that are now live:
+
+- board representation uses the existing 3x3 sim `Board`
+- moves use existing `slide(...)`
+- chance node spawns only level `1`
+- chance node averages uniformly over every empty cell
+- depth limit is fixed/configurable instead of `count_distinct_tiles(board) - 2`
+
+Correctness fixes added after review:
+
+- `WIN_SCORE = 1_000_000_000`
+- immediate level-9 win returns terminal win score before heuristic cutoff
+- `score_move_node` does not recurse through immediate winning children
+- no-legal-move terminal is explicit for depth logging
+- `maxdepth` logging now reflects real recursion depth better
+- unchanged-move legality checks are safe because `execute_move_*` returns the original board reference when `slide(...).moved === false`
+
+Sanity coverage added in `src/sim/expectimax.test.ts`:
+
+- invalid top-level move returns `0`
+- immediate `8+8 -> 9` root move returns `WIN_SCORE`
+- chance node expands exactly one level-1 child per empty cell
+- immediate winning move in `score_move_node` does not recurse further
+- `maxdepth` updates when depth limit allows recursion
+
+### Adaptive Reference Depth Mode
+
+Adaptive reference mode was added in `src/sim/expectimax.ts`.
+
+Rule:
+
+- use depth `6` when `maxTileLevel(board) < 8`
+- use depth `8` when `maxTileLevel(board) >= 8`
+
+When `referenceLog === true`, each decision logs:
+
+```text
+[reference] maxTile=<...> depthLimit=<...>
+```
+
+Public entry point:
+
+```ts
+createExpectimaxPolicy({
+  reference: true,
+  referenceAdaptive: true,
+  referenceLog: false,
+})
+```
+
+### In-Game Hint Button Status
+
+The in-game hint button in `src/game/scenes/GameScene.ts` now uses adaptive reference expectimax directly.
+
+Current behavior:
+
+- primary hint path: adaptive reference expectimax
+- fallback path on exception: existing `getHint(...)`
+
+Important practical note:
+
+- this changes hint-button behavior only
+- it does not change the autoplay / Monte Carlo baseline policies used by the closure experiments
+
+## 2026-04-24 Reference Expectimax Benchmarks
+
+Practical benchmark command used:
+
+```powershell
+$env:REF_BENCH_N='5'; $env:REF_BENCH_SEED='20260424'; $env:REF_BENCH_D8_MAX_PROJECTED_MS='400000'; node .\node_modules\tsx\dist\cli.mjs tools/benchmark-reference-expectimax.ts
+```
+
+Observed:
+
+```text
+policy             | win/9          | reach8         | avgTurns | avgDecision | total    | depth8Used | invalid | maxLevelDist
+existing/default   | 0/5 (0.0%)     | 0/5 (0.0%)     | 91.4     | 0.05ms      | 0.03s    | n/a        | 0       | 6:2 7:3
+reference d6       | 3/5 (60.0%)    | 5/5 (100.0%)   | 263.4    | 83.54ms     | 110.11s  | 0          | 0       | 8:2 9:3
+adaptive 6/8       | 5/5 (100.0%)   | 5/5 (100.0%)   | 272.8    | 159.45ms    | 217.58s  | 690        | 0       | 9:5
+```
+
+Interpretation:
+
+- the reference expectimax line is behaviorally sane
+- deeper reference search materially changes outcomes on the same seeds
+- adaptive `6/8` outperformed fixed `6` on the small deterministic sample
+- cost is significant and must be treated as a UI/runtime concern, not a correctness issue
+
+## 2026-04-24 Adaptive Hint Latency
+
+Latency command used:
+
+```powershell
+$env:REF_LAT_N='5'; $env:REF_LAT_SEED='20260424'; node .\node_modules\tsx\dist\cli.mjs tools/benchmark-reference-expectimax-latency.ts
+```
+
+Observed over `5` episodes / `1364` hint decisions:
+
+```text
+avgDecisionMs = 156.61
+p50Ms         = 75.30
+p90Ms         = 379.79
+p95Ms         = 559.87
+p99Ms         = 1395.28
+maxDecisionMs = 2351.66
+maxSeed       = 20260428
+maxTurn       = 133
+maxBoardMaxTile = 8
+maxBoardEmptyCount = 3
+budgetCheck   = exceeds_1000ms
+```
+
+Interpretation:
+
+- typical latency is acceptable for a manual hint button
+- tail latency is not safe for a strict `1000ms` per-decision budget
+- the expensive decisions happen in the intended regime: `maxTile >= 8`
+- if future work targets UX smoothness, the next issue is latency control, not decision correctness
 
 ## Hard Constraints
 
@@ -552,7 +706,13 @@ For future sessions:
 ## Suggested Read Order For Next Session
 
 1. `docs/CLOSURE_SESSION_CONTEXT.md`
-2. `src/sim/closureSearch.ts`
-3. `src/sim/minimalSurvival.ts`
-4. `tools/closure-ab.ts`
-5. latest log or smoke output in `out/`
+2. if continuing closure/oracle work:
+3. `src/sim/closureSearch.ts`
+4. `src/sim/minimalSurvival.ts`
+5. `tools/closure-ab.ts`
+6. latest log or smoke output in `out/`
+7. if continuing hint/reference expectimax work:
+8. `src/sim/expectimax.ts`
+9. `src/game/scenes/GameScene.ts`
+10. `tools/benchmark-reference-expectimax.ts`
+11. `tools/benchmark-reference-expectimax-latency.ts`

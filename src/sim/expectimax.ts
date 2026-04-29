@@ -42,6 +42,8 @@ export type ExpectimaxConfig = {
   referenceDepthLimit?: number;
   /** reference expectimax용 move-by-move 로그 출력. */
   referenceLog?: boolean;
+  /** false면 reference expectimax의 기존 WIN_SCORE 포화 동작을 사용. 기본 true. */
+  referenceWinQualityTieBreak?: boolean;
   /** 하위 호환용 — scoreBoardV3에서는 사용하지 않음. */
   weights?: ScoreBoardWeights;
   patternSource?: PatternTripleSource;
@@ -65,6 +67,7 @@ export type ReferenceExpectimaxConfig = {
   adaptive?: boolean;
   depthLimit?: number;
   log?: boolean;
+  winQualityTieBreak?: boolean;
 };
 
 type trans_table_entry_t = {
@@ -81,6 +84,7 @@ type eval_state = {
   cachehits: number;
   moves_evaled: number;
   depth_limit: number;
+  win_quality_tie_break: boolean;
 };
 
 /** 동일 튜닝으로 leaf / 1·2·3-ply 평가를 묶은 클로저. */
@@ -246,6 +250,10 @@ const CPROB_THRESH_BASE = 0.0001;
 const CACHE_DEPTH_LIMIT = 15;
 const DEFAULT_REFERENCE_EXPECTIMAX_DEPTH_LIMIT = 8;
 const WIN_SCORE = 1_000_000_000;
+const WIN_DEPTH_BONUS = 10_000;
+const ROOT_IMMEDIATE_WIN_BONUS = 1_000_000;
+const LEGACY_TOPLEVEL_SCORE_TIE_BREAK = 1e-6;
+const LEGACY_IMMEDIATE_WIN_TIE_BREAK = 1e-3;
 
 const heur_score_table = new Float64Array(REFERENCE_LINE_TABLE_SIZE);
 const score_table = new Float64Array(REFERENCE_LINE_TABLE_SIZE);
@@ -362,8 +370,25 @@ function score_board(board: Board): number {
   return score_helper(board, score_table);
 }
 
-function isWinBoard(board: Board): boolean {
-  return maxTileLevel(board) >= 9;
+export function referenceMoveCausesRainbowFusion(board: Board, move: number): boolean {
+  const dir = REFERENCE_MOVE_ORDER[move];
+  if (dir === undefined) return false;
+  return slide(board, dir).win;
+}
+
+function execute_move_result(move: number, board: Board): { next: Board; moved: boolean; win: boolean } {
+  switch (move) {
+    case 0:
+      return slide(board, "UP");
+    case 1:
+      return slide(board, "DOWN");
+    case 2:
+      return slide(board, "LEFT");
+    case 3:
+      return slide(board, "RIGHT");
+    default:
+      return { next: board, moved: false, win: false };
+  }
 }
 
 function resolveReferenceDepthLimit(board: Board, cfg?: ReferenceExpectimaxConfig): number {
@@ -373,46 +398,17 @@ function resolveReferenceDepthLimit(board: Board, cfg?: ReferenceExpectimaxConfi
   return cfg?.depthLimit ?? DEFAULT_REFERENCE_EXPECTIMAX_DEPTH_LIMIT;
 }
 
-function execute_move_0(board: Board): Board {
-  const { next, moved } = slide(board, "UP");
-  return moved ? next : board;
+function score_win_at_current_depth(state: eval_state): number {
+  if (!state.win_quality_tie_break) return WIN_SCORE;
+  return WIN_SCORE + Math.max(0, state.depth_limit - state.curdepth) * WIN_DEPTH_BONUS;
 }
 
-function execute_move_1(board: Board): Board {
-  const { next, moved } = slide(board, "DOWN");
-  return moved ? next : board;
-}
-
-function execute_move_2(board: Board): Board {
-  const { next, moved } = slide(board, "LEFT");
-  return moved ? next : board;
-}
-
-function execute_move_3(board: Board): Board {
-  const { next, moved } = slide(board, "RIGHT");
-  return moved ? next : board;
-}
-
-function execute_move(move: number, board: Board): Board {
-  switch (move) {
-    case 0:
-      return execute_move_0(board);
-    case 1:
-      return execute_move_1(board);
-    case 2:
-      return execute_move_2(board);
-    case 3:
-      return execute_move_3(board);
-    default:
-      return board;
-  }
+function score_root_immediate_win(state: eval_state): number {
+  if (!state.win_quality_tie_break) return WIN_SCORE + LEGACY_IMMEDIATE_WIN_TIE_BREAK;
+  return WIN_SCORE + ROOT_IMMEDIATE_WIN_BONUS;
 }
 
 function score_tilechoose_node(state: eval_state, board: Board, cprob: number): number {
-  if (isWinBoard(board)) {
-    return WIN_SCORE;
-  }
-
   if (cprob < CPROB_THRESH_BASE || state.curdepth >= state.depth_limit) {
     state.maxdepth = Math.max(state.curdepth, state.maxdepth);
     return score_heur_board(board);
@@ -448,12 +444,13 @@ function score_move_node(state: eval_state, board: Board, cprob: number): number
   state.maxdepth = Math.max(state.maxdepth, state.curdepth);
   let foundLegal = false;
   for (let move = 0; move < 4; ++move) {
-    const newboard = execute_move(move, board);
+    const result = execute_move_result(move, board);
+    const newboard = result.moved ? result.next : board;
     state.moves_evaled++;
     if (board !== newboard) {
       foundLegal = true;
-      if (isWinBoard(newboard)) {
-        best = Math.max(best, WIN_SCORE);
+      if (result.win) {
+        best = Math.max(best, score_win_at_current_depth(state));
       } else {
         best = Math.max(best, score_tilechoose_node(state, newboard, cprob));
       }
@@ -467,14 +464,16 @@ function score_move_node(state: eval_state, board: Board, cprob: number): number
 }
 
 function _score_toplevel_move(state: eval_state, board: Board, move: number): number {
-  const newboard = execute_move(move, board);
+  const result = execute_move_result(move, board);
+  const newboard = result.moved ? result.next : board;
   if (board === newboard) {
     return 0;
   }
-  if (isWinBoard(newboard)) {
-    return WIN_SCORE + 1e-6;
+  if (result.win) {
+    return score_root_immediate_win(state);
   }
-  return score_tilechoose_node(state, newboard, 1.0) + 1e-6;
+  const score = score_tilechoose_node(state, newboard, 1.0);
+  return state.win_quality_tie_break ? score : score + LEGACY_TOPLEVEL_SCORE_TIE_BREAK;
 }
 
 export function score_toplevel_move(board: Board, move: number, cfg?: ReferenceExpectimaxConfig): number {
@@ -487,6 +486,7 @@ export function score_toplevel_move(board: Board, move: number, cfg?: ReferenceE
     cachehits: 0,
     moves_evaled: 0,
     depth_limit: cfg?.depthLimit ?? DEFAULT_REFERENCE_EXPECTIMAX_DEPTH_LIMIT,
+    win_quality_tie_break: cfg?.winQualityTieBreak !== false,
   };
 
   const start = Date.now();
@@ -737,6 +737,7 @@ export function createExpectimaxPolicy(cfg?: ExpectimaxConfig): Policy {
       adaptive: cfg.referenceAdaptive,
       depthLimit: cfg.referenceDepthLimit,
       log: cfg.referenceLog,
+      winQualityTieBreak: cfg.referenceWinQualityTieBreak,
     });
   }
 

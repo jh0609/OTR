@@ -73,6 +73,7 @@ const DRAG_TRACE_FADE_MS = 1000;
 const IN_GAME_HINT_POLICY = createExpectimaxPolicy({
   reference: true,
   referenceAdaptive: true,
+  referenceWinQualityTieBreak: true,
   referenceLog: false,
 });
 

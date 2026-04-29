@@ -3,7 +3,7 @@ import { LEN, freezeBoard, toUint8 } from "./board";
 
 /**
  * Slide one row to the left (2048 rules): merge equal adjacent once per pair, k+k → k+1.
- * 승리(win): **같은 라인에서** 8+8이 한 번 머지되어 9가 만들어질 때만 true (인접 8만으로는 불충분).
+ * 승리(win): 같은 라인에서 8+8 fusion이 일어나면 true. Fusion된 8 두 개는 보드에서 제거된다.
  */
 function slideLineLeft(line: Uint8Array): { line: Uint8Array; win: boolean } {
   const nz: number[] = [];
@@ -18,8 +18,12 @@ function slideLineLeft(line: Uint8Array): { line: Uint8Array; win: boolean } {
     const a = nz[i];
     const b = nz[i + 1];
     if (b !== undefined && a === b) {
+      if (a === 8) {
+        win = true;
+        i += 2;
+        continue;
+      }
       const merged = a + 1;
-      if (a === 8 && b === 8) win = true;
       out[w++] = merged;
       i += 2;
     } else {
